@@ -7,7 +7,7 @@ Description of R markdown files:
 2. DiploidSNPProcessing.Rmd: R markdown for demultiplexing diploid sturgeon reads, mapping reads to haploid reference, calling SNPs, filtering SNPs, and haplotyping SNPs.
 3. SpeciesDiscrimination.Rmd: R markdown for performing DAPC and PCA on the genomic and microsatellite datasets. 
 
-Description of companion files for haploid sturgeon sequence data analyses (files needed for HaploidGenomicReference.Rmd):
+Description of companion files in HaploidDataAnalyses (files needed for HaploidGenomicReference.Rmd):
 1. Spla_MiSeq_Barcodes.txt: Text file of barcodes for haploid sturgeon sequencing.
 2. Spla_MiSeq_IDs_Barcodes.txt: Text file for matching barcodes to sample IDs in haploid sturgeon. 
 3. trim_config.file: Script for trimming reads in haploid sturgeon. 
@@ -20,7 +20,7 @@ Description of companion files for haploid sturgeon sequence data analyses (file
 10. MiSeq_Sample_Data.csv: Metadata for haploid sturgeon.
 11. psv.txt: Text file of paralogous contigs identified in haploid dataset. 
 
-Description of companion files for diploid sturgeon sequence data analyses (files needed for DiploidSNPProcessing.Rmd and SpeciesDiscrimination.Rmd:
+Description of companion files in DiploidDataAnalyses (files needed for DiploidSNPProcessing.Rmd and SpeciesDiscrimination.Rmd):
 1. AS_HiSeq_Barcodes.txt: Text file of barcodes for diploid sturgeon sequencing.
 2. HiSeq_1.1_IDs_Barcodes.txt, HiSeq_1.2_IDs_Barcodes.txt, HiSeq_1.3_IDs_Barcodes.txt, and HiSeq_1.4_IDs_Barcodes.txt: Text files for matching barcodes to sample IDs in diploid sturgeon. 
 3. config.file: Script for trimming, mapping, and calling reads in diploid sturgeon. 
