@@ -1,0 +1,1038 @@
+---
+title: "Adult Sturgeon HiSeq 1, Markdown 2"
+authors: R. Flamio and D. Swift
+output: 
+  html_notebook: 
+    fig_height: 7
+    fig_width: 7
+    toc: yes
+---
+
+# Packages
+
+```{r}
+
+setwd("/home/shared/Sturgeon/Code")
+
+.libPaths("/usr/lib64/R/library")
+
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(rmarkdown)
+library(adegenet)
+library(ggplot2)
+library(tibble)
+library(hierfstat)
+library(readGenalex)
+library(related)
+library(Cairo)
+library(readr)
+library(spdep)
+library(viridis)
+library(RColorBrewer)
+#library(stringr)
+library(ggthemes)
+#library(rgdal)
+#library(mmod)
+#library(LEA)
+#library(Imap)
+library(conflicted)
+#library(rlang)
+library(radiator)
+library(pegas)
+
+conflict_prefer("count", "dplyr")
+conflict_prefer("arrange", "dplyr")
+conflict_prefer("mutate", "dplyr")
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("rename", "dplyr")
+conflict_prefer("summarise", "dplyr")
+conflict_prefer("summarize", "dplyr")
+
+source("ggplot.R")
+source("genind.R")
+source("HaplotypR.R")
+source("PCA.R")
+#source("libraries.R")
+source("DAPC.R")
+source("VCFfilterstats.R")
+#source("pairwisefst.R")
+
+# Load color and shapes schemes
+
+col4 <- c('#e41a1c','#377eb8','#4daf4a','#984ea3')
+
+col5 <- c("navyblue", "dodgerblue1", "rosybrown", "Red")
+
+```
+
+# Import medadata and genepop files
+
+```{r}
+
+# Import metadata 
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+# Read in filtered genepop file
+
+Spa_HiSeq1.gen <- read.genepop(file = "../Results/HiSeq_1/Spa_HiSeq1.gen", ncode = 3L, quiet = FALSE)
+
+# Convert to data frame
+
+Spa_df<- genind2df(Spa_HiSeq1.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+# Match individuals to metadata
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data <- Filt_Sample_Data %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU, Species)
+
+# Assign strata and set population level to site
+
+strata(Spa_HiSeq1.gen) <- Filt_Sample_Data
+setPop(Spa_HiSeq1.gen) <- ~Species_MU
+
+```
+
+Use the following analyses to determine clustering and population structure of sturgeon species and management units.
+
+#DAPC by species
+
+## Initial Analysis
+
+Discriminant Analysis of Principal Components (DAPC) Using K-means Clustering
+Use k-means clustering to identify clusters based on genetic similarity.
+
+For k-means clustering, it is appropriate to retain the majority of PCs to retain all variability for clustering. Determine how many PCs need to be retained to include c. 80% of variance.
+
+```{r}
+
+find.clusters(Spa_HiSeq1.gen, max.n.clust=10)
+
+```
+
+K-means cluster using 70 PCs.
+
+```{r}
+
+grp_BIC <- find.clusters.genind(Spa_HiSeq1.gen, n.pca = 70, stat = "BIC", choose.n.clust = FALSE, criterion = "min", max.n.clust = 10)
+
+grp_BIC
+
+grp_AIC <- find.clusters.genind(Spa_HiSeq1.gen, n.pca = 70, stat = "AIC", choose.n.clust = FALSE, criterion = "min", max.n.clust = 10)
+
+grp_AIC
+
+# Value selected for k and BIC value calculated for that k
+
+grp_BIC$stat
+
+# K=2, BIC = 750.226
+
+# Value selected for k and AIC value calculated for that k
+
+grp_AIC$stat
+
+# K=5, AIC = 743.314
+
+```
+
+## K = 2
+
+Determine Optimum Number of PCs to Retain
+
+Run initial DAPC for optimization.
+
+```{r}
+
+# Perform DAPC using k-mean clusters as groups
+
+dapc <-dapc(Spa_HiSeq1.gen, grp_BIC$grp, n.pca = 70, n.da=1)
+
+dapc
+
+scatter(dapc, legend=TRUE)
+
+```
+
+Perform stratified cross-validation of the DAPC using range of retained PCs while keeping the number of discriminant functions fixed.
+
+```{r}
+
+X <- scaleGen(Spa_HiSeq1.gen, NA.method = "mean")
+
+xval <- xvalDapc(X, grp_BIC$grp, n.pca.max = 70, training.set = 0.9, result = "groupMean", center = TRUE, scale = FALSE, n.pca = NULL, n.rep = 30, xval.plot = TRUE)
+
+xval[2:6]
+
+# Number of PCs Achieving Lowest MSE
+# 15
+
+```
+
+Final DAPC
+
+Run optimized DAPC.
+
+```{r}
+
+# Perform DAPC using k-mean clusters as groups
+
+dapc <-dapc(Spa_HiSeq1.gen, grp_BIC$grp, n.pca = 15, n.da = 1)
+
+# Proportion of conserved variance
+
+dapc$var
+
+# Eigenvalues of retained discriminant functions
+
+dapc$eig
+
+scatter(dapc, legend=FALSE)
+
+```
+
+Evaluate results of DAPC
+
+```{r, fig.height=6, fig.width=6, message=FALSE, warning=FALSE}
+
+DAPC_Ind <- as.data.frame(abs(dapc$ind.coord)) %>%
+  rownames_to_column("HiSeq_ID")
+
+DAPC_Ind$HiSeq_ID = str_replace_all(DAPC_Ind$HiSeq_ID,"-","_")
+
+DAPC_Ind <- left_join(DAPC_Ind, Filt_Sample_Data)
+
+Clust <- as.data.frame(grp_BIC$grp) %>%
+  rownames_to_column("HiSeq_ID") %>%
+  dplyr::rename(Cluster = `grp_BIC$grp`)
+
+Clust$HiSeq_ID = str_replace_all(Clust$HiSeq_ID,"-","_")
+
+DAPC_Ind <- left_join(DAPC_Ind, Clust)
+
+DAPC_Ind$Species <- factor(DAPC_Ind$Species, levels = c("PLS", "SVS"))
+
+ggplot(DAPC_Ind, aes(x = HiSeq_ID, y = LD1, fill = Cluster)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, color = "black", size = 0.5) +
+  labs(x = "", y = "") +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  facet_grid(. ~ Species, scales = "free") +
+  theme_standard +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/DAPC/Both_Species_BIC_2.png")
+
+```
+
+**Calculate Assignment Success**
+
+```{r}
+
+# PLS
+
+PLS <- filter(DAPC_Ind, Species == "PLS" & Cluster == 1)
+
+PLS_Correct_Assign <- as.numeric(dplyr::count(PLS)) / as.numeric(dplyr::count(dplyr::filter(DAPC_Ind, Species == "PLS")))
+PLS_Correct_Assign
+
+# SVS
+
+SVS <- filter(DAPC_Ind, Species == "SVS" & Cluster == 2)
+
+SVS_Correct_Assign <- as.numeric(dplyr::count(SVS)) / as.numeric(dplyr::count(dplyr::filter(DAPC_Ind, Species == "SVS")))
+SVS_Correct_Assign
+
+```
+
+**100% species assignment**
+
+### Allele Contributions of 11,082 contigs
+
+Alleles are haplotypes of a given contig. It is possible to get >>2 alleles/contig. They can be thought of similarly as to microsatellites in this regard. 
+
+```{r fig.height=8, fig.width=14, message=FALSE, warning=FALSE}
+
+DAPC_Loci <- as.data.frame(abs(dapc$var.contr)) %>%
+  rownames_to_column("Allele") %>%
+  separate(Allele, c("LOCUS", "ALLELE"), sep = -4, remove = FALSE)
+
+# Plot all alleles
+
+p1 <- ggplot(DAPC_Loci, aes(x = LOCUS, y = LD1)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0.0005, linetype = "dashed", color = "red") +
+  labs(x = "Loci", y = "Loading Principle Component 1") +
+  ggtitle("Both Species, All Loci") +
+  theme_standard +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+# Plot alleles above 0.0005 threshold
+
+Loc_PC1 <- DAPC_Loci %>%
+  dplyr::filter(LD1 > 0.0005)
+
+p2 <- ggplot(Loc_PC1, aes(x = LOCUS, y = LD1)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Loci", y = "Loading Principle Component 1") +
+  ggtitle("Both Species, All Loci") +
+  theme_standard +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+multiplot(p1, p2, cols = 1)
+
+dev.off()
+
+multiplot(p1, p2, cols = 1)
+
+# Find the top 33% most informative alleles and count how many there are
+
+Both_Loci_DAPC <- Loc_PC1 %>%
+  dplyr::filter(LD1 > quantile(Loc_PC1$LD1, 0.66))
+
+count(Both_Loci_DAPC)
+
+# 102 alleles
+
+# Identify number of distinct contigs
+
+DAPC_Loci_distinct <- dplyr::arrange(DAPC_Loci, desc(LD1)) %>% select("LOCUS")
+
+DAPC_Loci_distinct <- dplyr::distinct(DAPC_Loci_distinct)
+
+# 11,082 distinct contigs
+
+# Arrange alleles
+
+Top_Loci <- dplyr::arrange(DAPC_Loci, desc(LD1)) %>% select("LOCUS")
+
+# Create datasets retaining top 50, 100, 150, and 200 contigs
+
+# 50
+
+Top_Loci_20 <- dplyr::distinct(Top_Loci) %>% 
+  dplyr::slice(1:20)
+
+Top_Alleles_50 <- dplyr::semi_join(DAPC_Loci, Top_Loci_50, by = "LOCUS")
+
+# 100
+
+Top_Loci_100 <- dplyr::distinct(Top_Loci) %>% 
+  dplyr::slice(1:100)
+
+Top_Alleles_100 <- dplyr::semi_join(DAPC_Loci, Top_Loci_100, by = "LOCUS")
+
+# 150
+
+Top_Loci_150 <- dplyr::distinct(Top_Loci) %>% 
+  dplyr::slice(1:150)
+
+Top_Alleles_150 <- dplyr::semi_join(DAPC_Loci, Top_Loci_150, by = "LOCUS")
+
+# 200
+
+Top_Loci_200 <- dplyr::distinct(Top_Loci) %>% 
+  dplyr::slice(1:200)
+
+write.table(Top_Loci_200,"../Results/HiSeq_1/DAPC/200_informcontigs.txt", append = FALSE, quote = FALSE, sep = " ", dec = ".", row.names = FALSE, col.names = TRUE)
+# remove first line "LOCUS" in file manually
+
+Top_Alleles_200 <- dplyr::semi_join(DAPC_Loci, Top_Loci_200, by = "LOCUS")
+
+# Make file of loci (contigs) that does not contain most informative alleles for each dataset 
+
+# 50
+
+Remove_Loci_50 <- dplyr::anti_join(DAPC_Loci,Top_Alleles_50, by = "LOCUS")
+
+Remove_Loci_50 <- Remove_Loci_50$LOCUS
+
+# 100
+
+Remove_Loci_100 <- dplyr::anti_join(DAPC_Loci,Top_Alleles_100, by = "LOCUS")
+
+Remove_Loci_100 <- Remove_Loci_100$LOCUS
+
+# 150
+
+Remove_Loci_150 <- dplyr::anti_join(DAPC_Loci,Top_Alleles_150, by = "LOCUS")
+
+Remove_Loci_150 <- Remove_Loci_150$LOCUS
+
+# 200
+
+Remove_Loci_200 <- dplyr::anti_join(DAPC_Loci,Top_Alleles_200, by = "LOCUS")
+
+Remove_Loci_200 <- Remove_Loci_200$LOCUS
+
+# Remove unwanted contigs, only retain contigs containing most informative alleles
+
+Spa_HiSeq1_50contigs.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci_50) 
+
+Spa_HiSeq1_100contigs.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci_100) 
+
+Spa_HiSeq1_150contigs.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci_150) 
+
+Spa_HiSeq1_200contigs.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci_200) 
+
+# Convert to data frame and write to file
+
+# 50
+
+Spa_df<- genind2df(Spa_HiSeq1_50contigs.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1_50contigs.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1_50contigs.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data_50 <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data_50 <- Filt_Sample_Data_50 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU)
+  
+strata(Spa_HiSeq1_50contigs.gen) <- Filt_Sample_Data_50
+setPop(Spa_HiSeq1_50contigs.gen) <- ~Species_MU
+
+# 100
+
+Spa_df<- genind2df(Spa_HiSeq1_100contigs.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1_100contigs.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1_100contigs.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data_100 <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data_100 <- Filt_Sample_Data_100 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU)
+  
+strata(Spa_HiSeq1_100contigs.gen) <- Filt_Sample_Data_100
+setPop(Spa_HiSeq1_100contigs.gen) <- ~Species_MU
+
+# 150
+
+Spa_df<- genind2df(Spa_HiSeq1_150contigs.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1_150contigs.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1_150contigs.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data_150 <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data_150 <- Filt_Sample_Data_150 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU)
+  
+strata(Spa_HiSeq1_150contigs.gen) <- Filt_Sample_Data_150
+setPop(Spa_HiSeq1_150contigs.gen) <- ~Species_MU
+
+# 200
+
+Spa_df<- genind2df(Spa_HiSeq1_200contigs.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1_200contigs.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1_200contigs.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data_200 <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data_200 <- Filt_Sample_Data_200 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU)
+  
+strata(Spa_HiSeq1_200contigs.gen) <- Filt_Sample_Data_200
+setPop(Spa_HiSeq1_200contigs.gen) <- ~Species_MU
+
+# Write genepop file
+
+writeGenPop(Spa_HiSeq1_50contigs.gen, file.name = "../Results/HiSeq_1/Spa_HiSeq1_50contigs.gen", comment = "Spa_HiSeq1_50contigs")
+
+writeGenPop(Spa_HiSeq1_100contigs.gen, file.name = "../Results/HiSeq_1/Spa_HiSeq1_100contigs.gen", comment = "Spa_HiSeq1_100contigs")
+
+writeGenPop(Spa_HiSeq1_150contigs.gen, file.name = "../Results/HiSeq_1/Spa_HiSeq1_150contigs.gen", comment = "Spa_HiSeq1_150contigs")
+
+writeGenPop(Spa_HiSeq1_200contigs.gen, file.name = "../Results/HiSeq_1/Spa_HiSeq1_200contigs.gen", comment = "Spa_HiSeq1_200contigs")
+
+# Read in filtered genepop to make sure it exported correctly
+
+Test_50contigs.gen <- read.genepop(file = "../Results/HiSeq_1/Spa_HiSeq1_50contigs.gen", ncode = 3L, quiet = FALSE)
+
+Test_100contigs.gen <- read.genepop(file = "../Results/HiSeq_1/Spa_HiSeq1_100contigs.gen", ncode = 3L, quiet = FALSE)
+
+Test_150contigs.gen <- read.genepop(file = "../Results/HiSeq_1/Spa_HiSeq1_150contigs.gen", ncode = 3L, quiet = FALSE)
+
+Test_200contigs.gen <- read.genepop(file = "../Results/HiSeq_1/Spa_HiSeq1_200contigs.gen", ncode = 3L, quiet = FALSE)
+
+# Assign strata and set population level to site
+  
+strata(Test_50contigs.gen) <- Filt_Sample_Data_50
+setPop(Test_50contigs.gen) <- ~Species_MU
+
+strata(Test_100contigs.gen) <- Filt_Sample_Data_100
+setPop(Test_100contigs.gen) <- ~Species_MU
+
+strata(Test_150contigs.gen) <- Filt_Sample_Data_150
+setPop(Test_150contigs.gen) <- ~Species_MU
+
+strata(Test_200contigs.gen) <- Filt_Sample_Data_200
+setPop(Test_200contigs.gen) <- ~Species_MU
+
+```
+# Principal Component Analyses
+
+## Before DAPC (All 11,082 loci/distinct contigs)
+
+Scale alleles and perform PCA, plotting eigenvalues for the first 25 principal components.
+
+```{r fig.height=5, fig.width=5}
+
+X <-tab(Spa_HiSeq1.gen, freq=TRUE, NA.method="mean")
+
+PCA <-dudi.pca(df = X, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig <- eigenvalues(PCA)
+
+plot.eigen.variance(eig)
+
+```
+
+**Analyze PCA Results**
+
+Plot individuals by the first two principal components.
+
+```{r message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+
+PC_Inds <- PC.ind(PCA) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+PC_Inds$HiSeq_ID = str_replace_all(PC_Inds$HiSeq_ID,"-","_")
+
+PC_Inds <- left_join(PC_Inds, Filt_Sample_Data)
+
+# By species
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species, color = Species)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/PCA/All_Loci_PCA.png")
+
+# By management unit
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species_MU, color = Species_MU)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "navyblue", "rosybrown", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "navyblue", "rosybrown", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/PCA/All_Loci_PCA_b.png")
+
+
+```
+## After DAPC (50 most informative loci)
+
+Scale alleles and perform PCA, plotting eigenvalues for the first 25 principal components.
+
+```{r fig.height=5, fig.width=5}
+
+X <-tab(Test_50contigs.gen, freq=TRUE, NA.method="mean")
+
+PCA <-dudi.pca(df = X, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig <- eigenvalues(PCA)
+
+plot.eigen.variance(eig)
+
+```
+
+**Analyze PCA Results**
+
+Plot individuals by the first two principal components.
+
+```{r message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+PC_Inds <- PC.ind(PCA) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+PC_Inds$HiSeq_ID = str_replace_all(PC_Inds$HiSeq_ID,"-","_")
+
+PC_Inds <- left_join(PC_Inds, AS_HiSeq_Sample_Data)
+
+# All individuals
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species, color = Species)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+ggsave("../Results/HiSeq_1/PCA/50_Loci_PCA.png")
+
+```
+
+## After DAPC (100 most informative loci)
+
+Scale alleles and perform PCA, plotting eigenvalues for the first 25 principal components.
+
+```{r fig.height=5, fig.width=5}
+
+X <-tab(Test_100contigs.gen, freq=TRUE, NA.method="mean")
+
+PCA <-dudi.pca(df = X, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig <- eigenvalues(PCA)
+
+plot.eigen.variance(eig)
+
+```
+
+**Analyze PCA Results**
+
+Plot individuals by the first two principal components.
+
+```{r message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+PC_Inds <- PC.ind(PCA) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+PC_Inds$HiSeq_ID = str_replace_all(PC_Inds$HiSeq_ID,"-","_")
+
+PC_Inds <- left_join(PC_Inds, AS_HiSeq_Sample_Data)
+
+# All individuals
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species, color = Species)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/PCA/100_Loci_PCA.png")
+
+```
+## After DAPC (150 most informative loci)
+
+Scale alleles and perform PCA, plotting eigenvalues for the first 25 principal components.
+
+```{r fig.height=5, fig.width=5}
+
+X <-tab(Test_150contigs.gen, freq=TRUE, NA.method="mean")
+
+PCA <-dudi.pca(df = X, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig <- eigenvalues(PCA)
+
+plot.eigen.variance(eig)
+
+```
+
+**Analyze PCA Results**
+
+Plot individuals by the first two principal components.
+
+```{r message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+PC_Inds <- PC.ind(PCA) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+PC_Inds$HiSeq_ID = str_replace_all(PC_Inds$HiSeq_ID,"-","_")
+
+PC_Inds <- left_join(PC_Inds, AS_HiSeq_Sample_Data)
+
+# All individuals
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species, color = Species)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/PCA/150_Loci_PCA.png")
+
+```
+
+## After DAPC (200 most informative loci)
+
+Scale alleles and perform PCA, plotting eigenvalues for the first 25 principal components.
+
+```{r fig.height=5, fig.width=5}
+
+X <-tab(Test_200contigs.gen, freq=TRUE, NA.method="mean")
+
+PCA <-dudi.pca(df = X, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig <- eigenvalues(PCA)
+
+plot.eigen.variance(eig)
+
+```
+
+**Analyze PCA Results**
+
+Plot individuals by the first two principal components.
+
+```{r message=FALSE, warning=FALSE, fig.height=6, fig.width=6}
+
+PC_Inds <- PC.ind(PCA) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+PC_Inds$HiSeq_ID = str_replace_all(PC_Inds$HiSeq_ID,"-","_")
+
+PC_Inds <- left_join(PC_Inds, Filt_Sample_Data)
+
+# By species
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species, color = Species)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+ggsave("../Results/HiSeq_1/PCA/200_Loci_PCA.png")
+
+# By management unit
+
+ggplot(PC_Inds, aes(x = Axis1, y = (Axis2), label = Species, fill = Species_MU, color = Species_MU)) +
+  geom_jitter(alpha = 0.75, color = "black", shape =  21, size = 3) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig[2, 3], digits = 3), "%")) +
+  scale_fill_manual(values=c("dodgerblue1", "navyblue", "rosybrown", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "navyblue", "rosybrown", "Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+ggsave("../Results/HiSeq_1/PCA/200_Loci_PCA_b.png")
+
+```
+
+Use the following analyses to determine clustering and population structure of sturgeon species and management units.
+
+#DAPC a priori for management unit distinction 
+
+Determine Optimum Number of PCs to Retain
+
+Run initial DAPC for optimization.
+
+```{r}
+
+# Perform DAPC using a priori group membership and 70 principal components. 
+
+dapc <-dapc(Spa_HiSeq1.gen, pop(Spa_HiSeq1.gen), n.pca = 70, n.da=3)
+
+dapc
+
+scatter(dapc, legend=TRUE)
+
+```
+
+Perform stratified cross-validation of the DAPC using range of retained PCs while keeping the number of discriminant functions fixed.
+
+```{r}
+
+X <- scaleGen(Spa_HiSeq1.gen, NA.method = "mean")
+
+xval <- xvalDapc(X, pop(Spa_HiSeq1.gen), n.pca.max = 70, training.set = 0.9, result = "groupMean", center = TRUE, scale = FALSE, n.pca = NULL, n.rep = 30, xval.plot = TRUE)
+
+xval[2:6]
+
+# Number of PCs Achieving Lowest MSE
+# 5
+
+```
+Final DAPC
+
+Run optimized DAPC.
+
+```{r}
+
+# Perform DAPC using a priori group membership 
+
+dapc <-dapc(Spa_HiSeq1.gen, pop(Spa_HiSeq1.gen), n.pca = 5, n.da = 3)
+
+# Proportion of conserved variance
+
+dapc$var
+
+# Eigenvalues of retained discriminant functions
+
+dapc$eig
+
+myPal <- colorRampPalette(c("blue","lightblue","red","orange"))
+
+scatter(dapc, col=transp(myPal(4)), leg=FALSE, cstar=0, cell=0, scree.da=FALSE, clab=0, cex=2)
+
+
+```
+```{r}
+
+# Discriminant functions 2 versus 1
+
+scatter(dapc,xax=1,yax=2, col=col5, solid=0.75, leg=FALSE, cstar=0, cell=0, scree.da=FALSE, clab=0, cex=2)
+
+```
+```{r}
+
+# Discriminant functions 3 versus 1
+
+scatter(dapc,xax=1,yax=3, col=col5, solid=0.75, leg=FALSE, cstar=0, cell=0, scree.da=FALSE, clab=0, cex=2)
+
+```
+
+```{r}
+
+# Discriminant functions 3 versus 2
+
+scatter(dapc,xax=2,yax=3, col=col5, solid=0.75, leg=FALSE, cstar=0, cell=0, scree.da=FALSE, clab=0, cex=2)
+
+```
+
+# DAPC using 19 microsatellite loci 
+
+## Import medadata and genepop files
+
+```{r}
+
+# Import metadata 
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+# Read in genepop file with 19 microsatellite data for 109 individuals
+
+Spa_usats.gen <- read.genepop(file = "../Results/HiSeq_1/DAPC/Spa_usats.gen", ncode = 3L, quiet = FALSE)
+
+# Convert to data frame
+
+Spa_df<- genind2df(Spa_usats.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+# Match individuals to metadata
+
+Spa_Inds <- as.data.frame(indNames(Spa_usats.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_usats.gen)`)
+
+Spa_Inds$HiSeq_ID = str_replace_all(Spa_Inds$HiSeq_ID,"-","_")
+
+Filt_Sample_Data <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data <- Filt_Sample_Data %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU, Species)
+
+# Assign strata and set population level to site
+
+strata(Spa_usats.gen) <- Filt_Sample_Data
+setPop(Spa_usats.gen) <- ~Species_MU
+
+```
+
+Use the following analyses to determine clustering and population structure of sturgeon species and management units.
+
+## Initial Analysis
+
+Discriminant Analysis of Principal Components (DAPC) USing K-means Clustering
+Use k-means clustering to identify clusters based on genetic similarity.
+
+For k-means clustering, it is appropriate to retain the majority of PCs to retain all variability for clustering. Determine how many PCs need to be retained to include c. 80% of variance.
+
+```{r}
+
+find.clusters(Spa_usats.gen, max.n.clust=10)
+
+```
+
+K-means cluster using 40 PCs.
+
+```{r}
+
+grp_BIC <- find.clusters.genind(Spa_usats.gen, n.pca = 40, stat = "BIC", choose.n.clust = FALSE, criterion = "min", max.n.clust = 10)
+
+grp_BIC
+
+grp_AIC <- find.clusters.genind(Spa_usats.gen, n.pca = 40, stat = "AIC", choose.n.clust = FALSE, criterion = "min", max.n.clust = 10)
+
+grp_AIC
+
+# Value selected for k and BIC value calculated for that k
+
+grp_BIC$stat
+
+# K=2, BIC = 198.174
+
+# Value selected for k and AIC value calculated for that k
+
+grp_AIC$stat
+
+# K=9, AIC = 184.399
+
+```
+
+## K = 2
+
+Determine Optimum Number of PCs to Retain
+
+Run initial DAPC for optimization.
+
+```{r}
+
+# Perform DAPC using k-mean clusters as groups
+
+dapc <-dapc(Spa_usats.gen, grp_BIC$grp, n.pca = 40, n.da=1)
+
+dapc
+
+scatter(dapc, legend=TRUE)
+
+```
+
+Perform stratified cross-validation of the DAPC using range of retained PCs while keeping the number of discriminant functions fixed.
+
+```{r}
+
+X <- scaleGen(Spa_usats.gen, NA.method = "mean")
+
+xval <- xvalDapc(X, grp_BIC$grp, n.pca.max = 40, training.set = 0.9, result = "groupMean", center = TRUE, scale = FALSE, n.pca = NULL, n.rep = 30, xval.plot = TRUE)
+
+xval[2:6]
+
+# Number of PCs Achieving Lowest MSE
+# 15
+
+```
+
+Final DAPC
+
+Run optimized DAPC.
+
+```{r}
+
+# Perform DAPC using k-mean clusters as groups
+
+dapc <-dapc(Spa_usats.gen, grp_BIC$grp, n.pca = 15, n.da = 1)
+
+# Proportion of conserved variance
+
+dapc$var
+
+# Eigenvalues of retained discriminant functions
+
+dapc$eig
+
+scatter(dapc, legend=FALSE)
+
+```
+
+Evaluate results of DAPC
+
+```{r, fig.height=6, fig.width=6, message=FALSE, warning=FALSE}
+
+DAPC_Ind <- as.data.frame(abs(dapc$ind.coord)) %>%
+  rownames_to_column("HiSeq_ID")
+
+DAPC_Ind$HiSeq_ID = str_replace_all(DAPC_Ind$HiSeq_ID,"-","_")
+
+DAPC_Ind <- left_join(DAPC_Ind, Filt_Sample_Data)
+
+Clust <- as.data.frame(grp_BIC$grp) %>%
+  rownames_to_column("HiSeq_ID") %>%
+  dplyr::rename(Cluster = `grp_BIC$grp`)
+
+Clust$HiSeq_ID = str_replace_all(Clust$HiSeq_ID,"-","_")
+
+DAPC_Ind <- left_join(DAPC_Ind, Clust)
+
+DAPC_Ind$Species <- factor(DAPC_Ind$Species, levels = c("PLS", "SVS"))
+
+ggplot(DAPC_Ind, aes(x = HiSeq_ID, y = LD1, fill = Cluster)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 0, color = "black", size = 0.5) +
+  labs(x = "", y = "") +
+  scale_fill_manual(values=c("dodgerblue1", "Red")) +
+  scale_color_manual(values=c("dodgerblue1", "Red")) +
+  facet_grid(. ~ Species, scales = "free") +
+  theme_standard +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+ggsave("../Results/HiSeq_1/DAPC/Both_Species_BIC_usats.png")
+
+```
+
+**Calculate Assignment Success**
+
+```{r}
+
+# PLS
+
+PLS <- filter(DAPC_Ind, Species == "PLS" & Cluster == 1)
+
+PLS_Correct_Assign <- as.numeric(dplyr::count(PLS)) / as.numeric(dplyr::count(dplyr::filter(DAPC_Ind, Species == "PLS")))
+PLS_Correct_Assign
+# 1
+
+# SVS
+
+SVS <- filter(DAPC_Ind, Species == "SVS" & Cluster == 2)
+
+SVS_Correct_Assign <- as.numeric(dplyr::count(SVS)) / as.numeric(dplyr::count(dplyr::filter(DAPC_Ind, Species == "SVS")))
+SVS_Correct_Assign
+# 0.9807692
+# 1 shovelnose in the CLMU assigned to the pallid cluster (Cluster 1)
+
+```
+

@@ -1,0 +1,3509 @@
+---
+title: "Adult Sturgeon HiSeq 1, Markdown 1"
+authors: R. Flamio and D. Swift
+output: 
+  html_notebook: 
+    fig_height: 7
+    fig_width: 7
+    toc: yes
+---
+
+# Packages
+
+```{r}
+
+setwd("/home/shared/Sturgeon/Code")
+
+.libPaths("/usr/lib64/R/library")
+
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(rmarkdown)
+library(adegenet)
+library(sp)
+library(ggplot2)
+library(tibble)
+library(hierfstat)
+library(pegas)
+library(readGenalex)
+library(related)
+library(Cairo)
+library(readr)
+library(spdep)
+library(viridis)
+library(RColorBrewer)
+#library(stringr)
+library(ggthemes)
+#library(rgdal)
+#library(mmod)
+#library(LEA)
+#library(Imap)
+library(conflicted)
+#library(rlang)
+library(radiator)
+library(zvau)
+
+conflict_prefer("count", "dplyr")
+conflict_prefer("arrange", "dplyr")
+conflict_prefer("mutate", "dplyr")
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("rename", "dplyr")
+conflict_prefer("summarise", "dplyr")
+conflict_prefer("summarize", "dplyr")
+
+
+source("ggplot.R")
+source("genind.R")
+source("HaplotypR.R")
+source("PCA.R")
+#source("libraries.R")
+source("DAPC.R")
+source("VCFfilterstats.R")
+#source("pairwisefst.R")
+
+
+col7 <- c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02','#a6761d')
+
+# Load colour and shapes schemes
+
+col6 <- c('#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#ffff33')
+col13 <- c('#a6cee3','#1f78b4','#b2df8a','#33a02c','#fb9a99','#e31a1c','#fdbf6f','#ff7f00','#cab2d6','#6a3d9a','#ffff99','#b15928', 'black')
+Nb_Sites <- 20
+Site_Colours <- colorRampPalette(brewer.pal(8, "Set1"))(Nb_Sites)
+
+shape3 <- c(24, 21, 23)
+shape6 <- c(24, 21, 22, 23, 8, 25)
+
+```
+
+# Demultiplex HiSeq data using process_radtags from Stacks v2.0. 
+ option (1) indicates first input file for paired end (PE) reads
+ option (2) indicates second input file for PE reads
+ option (b) indicates path to file containing barcodes
+ option (--renz_1) indicates first restriction enzyme 
+ option (i) indicates input file type
+ option (E) indicates how quality scores are encoded
+ option (r) allows retention of barcodes
+ option (o) indicates output folder
+ option (&) allows programs to be run simultaneously
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/
+
+process_radtags -1 /home/DATA/STURGEON/AS-1-1-R1_R1_001.fastq.gz -2 /home/DATA/STURGEON/AS-1-1-R1_R2_001.fastq.gz -b /home/shared/Sturgeon/Code/AS_HiSeq_Barcodes.txt --renz_1 ecoRI -i gzfastq -E phred33 -r -o /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX2/ &
+process_radtags -1 /home/DATA/STURGEON/AS-1-2-R1_R1_001.fastq.gz -2 /home/DATA/STURGEON/AS-1-2-R1_R2_001.fastq.gz -b /home/shared/Sturgeon/Code/AS_HiSeq_Barcodes.txt --renz_1 ecoRI -i gzfastq -E phred33 -r -o /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX4/ &
+process_radtags -1 /home/DATA/STURGEON/AS-1-3-R1_R1_001.fastq.gz -2 /home/DATA/STURGEON/AS-1-3-R1_R2_001.fastq.gz -b /home/shared/Sturgeon/Code/AS_HiSeq_Barcodes.txt --renz_1 ecoRI -i gzfastq -E phred33 -r -o /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX7/ &
+process_radtags -1 /home/DATA/STURGEON/AS-1-4-R1_R1_001.fastq.gz -2 /home/DATA/STURGEON/AS-1-4-R1_R2_001.fastq.gz -b /home/shared/Sturgeon/Code/AS_HiSeq_Barcodes.txt --renz_1 ecoRI -i gzfastq -E phred33 -r -o /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX10/
+
+```
+
+# Analyze retained reads one index at a time
+
+Uses packages plyr and packages bundled in tidyverse (i.e. dplyr, readr). 
+
+```{r}
+
+#IDX2
+
+rm(l)
+l<-list()
+Lib <- "HS1.1"
+No_Samples <- 30
+l[["HS1.1"]] <- read_table2("../Data/Sequencing/HiSeq_1/IDX2/process_radtags.log",
+                             skip = 13, n_max = No_Samples,
+                             col_names = c("BARCODE", "ALL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+  dplyr::mutate(PROP_RETAINED = RETAINED/ALL_READS,
+                LIBRARY = Lib) %>%
+  dplyr::select(LIBRARY, BARCODE, PROP_RETAINED, ALL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+  dplyr::mutate(TOTAL_READS = sum(ALL_READS))
+
+# Create single data frame
+
+radtagslog <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`, LQ_READS)
+write_csv(radtagslog, "../Results/HiSeq_1/HS1.1_radtags.csv")
+HS1.1_radtags <- read.csv("../Results/HiSeq_1/HS1.1_radtags.csv")
+HS1.1_radtags
+
+#IDX4
+
+rm(l)
+l<-list()
+Lib <- "HS1.2"
+No_Samples <- 30
+l[["HS1.2"]] <- read_table2("../Data/Sequencing/HiSeq_1/IDX4/process_radtags.log",
+                             skip = 13, n_max = No_Samples,
+                             col_names = c("BARCODE", "ALL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+  dplyr::mutate(PROP_RETAINED = RETAINED/ALL_READS,
+                LIBRARY = Lib) %>%
+  dplyr::select(LIBRARY, BARCODE, PROP_RETAINED, ALL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+  dplyr::mutate(TOTAL_READS = sum(ALL_READS))
+
+# Create single data frame
+
+radtagslog <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`, LQ_READS)
+write_csv(radtagslog, "../Results/HiSeq_1/HS1.2_radtags.csv")
+HS1.2_radtags <- read.csv("../Results/HiSeq_1/HS1.2_radtags.csv")
+HS1.2_radtags
+
+#IDX7
+
+rm(l)
+l<-list()
+Lib <- "HS1.3"
+No_Samples <- 30
+l[["HS1.3"]] <- read_table2("../Data/Sequencing/HiSeq_1/IDX7/process_radtags.log",
+                             skip = 13, n_max = No_Samples,
+                             col_names = c("BARCODE", "ALL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+  dplyr::mutate(PROP_RETAINED = RETAINED/ALL_READS,
+                LIBRARY = Lib) %>%
+  dplyr::select(LIBRARY, BARCODE, PROP_RETAINED, ALL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+  dplyr::mutate(TOTAL_READS = sum(ALL_READS))
+
+# Create single data frame
+
+radtagslog <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`, LQ_READS)
+write_csv(radtagslog, "../Results/HiSeq_1/HS1.3_radtags.csv")
+HS1.3_radtags <- read.csv("../Results/HiSeq_1/HS1.3_radtags.csv")
+HS1.3_radtags
+
+#IDX10
+
+rm(l)
+l<-list()
+Lib <- "HS1.4"
+No_Samples <- 30
+l[["HS1.4"]] <- read_table2("../Data/Sequencing/HiSeq_1/IDX10/process_radtags.log",
+                             skip = 13, n_max = No_Samples,
+                             col_names = c("BARCODE", "ALL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+  dplyr::mutate(PROP_RETAINED = RETAINED/ALL_READS,
+                LIBRARY = Lib) %>%
+  dplyr::select(LIBRARY, BARCODE, PROP_RETAINED, ALL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+  dplyr::mutate(TOTAL_READS = sum(ALL_READS))
+
+# Create single data frame
+
+radtagslog <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`, LQ_READS)
+write_csv(radtagslog, "../Results/HiSeq_1/HS1.4_radtags.csv")
+HS1.4_radtags <- read.csv("../Results/HiSeq_1/HS1.4_radtags.csv")
+HS1.4_radtags
+
+```
+
+# Rename for dDocent and concantenate into main HiSeq_1.1 folder. 
+
+Note: HiSeq_1.*_IDs_Barcodes into appropriate index folder. 
+
+Rename files with individual IDs within each index. 
+dos2unix converts DOS to Unix formatted file. 
+
+```{bash}
+
+#IDX2
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX2/
+
+dos2unix HiSeq_1.1_IDs_Barcodes.txt
+  
+Rename_for_dDocent.sh HiSeq_1.1_IDs_Barcodes.txt
+
+rm *rem.*
+
+mv *.gz /home/shared/Sturgeon/Data/Sequencing/HiSeq_1
+
+
+#IDX4
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX4/
+
+dos2unix HiSeq_1.2_IDs_Barcodes.txt
+  
+Rename_for_dDocent.sh HiSeq_1.2_IDs_Barcodes.txt
+
+rm *rem.*
+
+mv *.gz /home/shared/Sturgeon/Data/Sequencing/HiSeq_1
+
+#IDX7
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX7/
+
+dos2unix HiSeq_1.3_IDs_Barcodes.txt
+  
+Rename_for_dDocent.sh HiSeq_1.3_IDs_Barcodes.txt
+
+rm *rem.*
+
+mv *.gz /home/shared/Sturgeon/Data/Sequencing/HiSeq_1
+
+#IDX10
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1/IDX10/
+
+dos2unix HiSeq_1.4_IDs_Barcodes.txt
+  
+Rename_for_dDocent.sh HiSeq_1.4_IDs_Barcodes.txt
+
+rm *rem.*
+
+mv *.gz /home/shared/Sturgeon/Data/Sequencing/HiSeq_1
+```
+
+### Trim and map reads and call SNPs using dDocent
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/HiSeq_1
+
+dDocent /home/shared/Sturgeon/Code/config.file
+
+```
+
+# Preliminary Filtering
+
+
+## Individuals and Populations
+
+Produce a list of all individuals included in the SNP dataset
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1
+
+mv ../../HiSeq_1/TotalRawSNPs.vcf ../../HiSeq_1/Final.recode.vcf ./vcf
+
+vcfsamplenames ./vcf/TotalRawSNPs.vcf > ./Stats/raw.ind
+
+```
+
+Use `ind_raw` file to write text files of individuals in each library and population
+
+```{r Assign sample data}
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+# Import Ind_raw
+
+Ind_Raw <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/raw.ind", 
+  header = FALSE, stringsAsFactors = FALSE,
+  col.names = "HiSeq_ID") %>%
+separate(HiSeq_ID, into = c("Zone", "Lib_HiSeq_ID"), sep ="_", remove=FALSE) %>%
+separate(Lib_HiSeq_ID, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+select(-Lib_HiSeq_ID) %>%
+select(-Zone) %>%
+select(-temp) %>%
+mutate(HiSeq = replace(HiSeq, HiSeq == 0, 10))
+
+Ind_Raw <- left_join(Ind_Raw, AS_HiSeq_Sample_Data, by="HiSeq_ID")
+
+# Create files with individuals by species
+
+temp <- Ind_Raw %>%
+filter(Species == "PLS") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/PLS.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Species == "SVS") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/SVS.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# Create files with individuals by species and management unit
+
+temp <- Ind_Raw %>%
+filter(Species == "PLS") %>%
+filter(MU == "GPMU") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/PLS_GPMU.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Species == "PLS") %>%
+filter(MU == "CLMU") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/PLS_CLMU.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Species == "SVS") %>%
+filter(MU == "GPMU") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/SVS_GPMU.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Species == "SVS") %>%
+filter(MU == "CLMU") %>%
+select(HiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/SVS_CLMU.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# Count the number of individuals in each species
+
+Species <- count(Ind_Raw, Species)
+View(Species)
+
+# Count the number of individuals of each species per management unit
+
+Species_MU <- count(Ind_Raw, Species, MU)
+View(Species_MU)
+
+```
+
+Use `VCFtools` to create stats files for depth, missing data, heterozygosity, and site quality for raw data
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1
+
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --depth
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --site-mean-depth
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --site-quality
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --missing-indv
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --missing-site
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --het
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --singletons
+
+# After filtering, kept 120 out of 120 Individuals
+# After filtering, kept 566816 out of a possible 566816 Sites
+```
+
+Compare raw stats
+
+```{r stats raw, fig.height=7, fig.width=14, message=FALSE, warning=FALSE}
+
+# Load raw stats files
+
+Ind_Raw_Stats <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Raw") %>%
+separate(INDV, into = c("Zone", "Lib_INDV"), sep ="_", remove=FALSE) %>%
+separate(Lib_INDV, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+select(-Lib_INDV) %>%
+select(-Zone) %>%
+select(-temp) 
+
+write.csv(Ind_Raw_Stats, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Ind_Raw_Stats.csv", row.names = FALSE, na = "")
+
+```
+
+## Quick filtering for initial PCA
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf
+
+vcftools --vcf Final.recode.vcf --minQ 30 --minDP 5 --recode --recode-INFO-all --out Final_minQ_DP
+# After filtering, kept 120 out of 120 Individuals
+# After filtering, kept 183180 out of a possible 183180 Sites
+
+vcfallelicprimitives Final_minQ_DP.recode.vcf --keep-info --keep-geno > Final_prim.vcf
+sed 's_\.|\._\./\._g' Final_prim.vcf > Final_fixed.vcf
+
+vcftools --vcf Final_fixed.vcf --remove-indels --recode --recode-INFO-all --out Final_no_indels
+# After filtering, kept 120 out of 120 Individuals
+# After filtering, kept 200236 out of a possible 234140 Sites
+
+vcftools --vcf Final_no_indels.recode.vcf --thin 1000 --out Final_Thinned --recode --recode-INFO-all
+# After filtering, kept 120 out of 120 Individuals
+# After filtering, kept 35039 out of a possible 200236 Sites
+
+vcftools --vcf Final_Thinned.recode.vcf --max-missing 0.95 --out Final_Filt --recode --recode-INFO-all
+# After filtering, kept 120 out of 120 Individuals
+# After filtering, kept 19835 out of a possible 35039 Sites
+
+```
+
+## PCA
+
+Import filtered vcf file and determine if multiple species are present.
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=7}
+
+library(vcfR)
+
+Final_vcf <- read.vcfR(file ="../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Final_Filt.recode.vcf")
+
+Final_Gen <- vcfR2genind(Final_vcf)
+
+# PCA With All Individuals
+
+X_All <-tab(Final_Gen, freq=TRUE, NA.method="mean")
+
+PCA_All <-dudi.pca(df = X_All, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig_All <- eigenvalues(PCA_All)
+
+plot.eigen.variance(eig_All)
+
+# Plot
+
+PC_Inds <- PC.ind(PCA_All) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+Und_Inds <- anti_join(Ind_Raw, PC_Inds)
+
+PC_Inds_All  <- PC.ind(PCA_All) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`) %>%
+  left_join(Ind_Raw) %>%
+  separate(HiSeq_ID, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-temp)
+
+```
+
+
+Plots
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=14}
+
+# Make new column with a combination of species and management unit
+
+temp <- PC_Inds_All %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE)
+
+# Plot by species and management unit
+
+p1 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species, fill = Species, color = Species)) +
+  geom_point(alpha = 0.75, size = 4) +
+  labs(x = paste("PC1:", round(eig_All[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All[2, 3], digits = 3), "%")) +
+  ggtitle("By Species") +
+  scale_fill_manual(values=c("dodgerblue1","Red")) +
+  scale_color_manual(values=c("dodgerblue1","Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+p2 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species_MU, fill = Species_MU, color = Species_MU)) +
+  geom_point(alpha = 0.75, size = 4) +
+  labs(x = paste("PC1:", round(eig_All[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All[2, 3], digits = 3), "%")) +
+  ggtitle("By Management Unit") +
+  scale_fill_manual(values=c("dodgerblue1","navyblue","rosybrown","Red")) +
+  scale_color_manual(values=c("dodgerblue1","navyblue","rosybrown","Red")) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+
+multiplot(p1, p2, cols = 2)
+
+dev.off()
+
+multiplot(p1, p2, cols = 2)
+
+```
+
+# SNP Filtering
+
+## Filter 1: Remove Unwanted and Low Quality Individuals
+
+Remove unwanted individuals. Related individuals may bias analyses and must be removed.
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+
+vcftools --vcf TotalRawSNPs.vcf --out Spa_F1a --remove-indv RSP_036 --remove-indv RSP_039 --remove-indv RSP_041 --remove-indv RSP_064 --remove-indv RSP_072 --remove-indv RSP_080 --remove-indv RSP_086 --remove-indv RSP_089 --remove-indv RSP_090 --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 120 Individuals
+# After filtering, kept 566816 out of a possible 566816 Sites
+
+```
+
+Filter based on quality score, coverage, mising data, minor alleles, and mapping/variant calling artifacts
+
+Create a list of low quality individuals to remove
+
+```{r}
+
+# Create a list of low quality individuals to remove
+
+LQ_Ind <- Ind_Raw_Stats %>%
+  dplyr::filter(MISS_Raw > 0.9)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/LQ_raw.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# 0 low quality individuals
+
+```
+
+Remove low quality individuals
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F1a.recode.vcf --out ./vcf/Spa_F1b --remove ./Stats/LQ_raw.ind --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 566816 out of a possible 566816 Sites
+
+```
+
+The QUAL column of a VCF file is a phred-based score indicating the probability that the variant shown in the ALT column is wrong. Given the Phred quality score (Q), and the probability that a base is incorrectly called (P), Q = -10(Log10P).
+
+A quality score of 20 indicates, a 1 in 100 chance that the SNP site has been called incorrectly (i.e. 99% probability that correct call)
+
+Filter loci with quality score < 20, maximum mean depth of 2500 reads, and a minimum genotype depth of 3, i.e. genotypes with less than 3 reads are coded as missing
+
+```{bash filter LQ SNP calls}
+
+# Filter LQ SNP calls
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F1b.recode.vcf --out ./vcf/Spa_F1c --minQ 20 --minGQ 20 --minDP 3 --maxDP 2500 --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 307034 out of a possible 566816 Sites
+
+# Stats 
+
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --depth
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --missing-indv
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --missing-site
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --het
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --geno-depth
+vcftools --vcf ./vcf/Spa_F1c.recode.vcf --out ./Stats/Spa_F1 --singletons
+
+```
+
+Review stats
+
+```{r fig.height=14, fig.width=10,  message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F1 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F1")
+
+Loci_Stats_F1 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F1")
+
+temp <- dplyr::filter(Loci_Stats_F1, MISS_Spa_F1 >= 0.7)
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F1, aes(x = MISS_Spa_F1)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "missing data per individual") +
+theme_standard
+
+# Plot Fis per individual
+
+p2 <- ggplot(Ind_Stats_F1, aes(x = Fis_Spa_F1)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot read depth per individual
+
+p3 <- ggplot(Ind_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Individual") +
+theme_standard
+
+# Plot depth vs missing
+
+p4 <- ggplot(Ind_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1, y = MISS_Spa_F1)) +
+geom_point(shape = 1) +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Individual", y = "% Missing Data") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F1, aes(x = MISS_Spa_F1)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1, y = MISS_Spa_F1)) +
+geom_point(shape = 1) +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dplyr::count(Ind_Stats_F1)
+
+dplyr::count(Loci_Stats_F1)
+
+```
+
+Removing low confidence SNP loci and genotype calls results in a reduction in the number of the (maximum) SNPs per locus.
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+
+p1 <- Loci_Raw_Stats %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs Per Locus, Raw") +
+theme_standard
+
+p2 <- Loci_Stats_F1 %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs Per Locus, F1") +
+theme_standard
+
+multiplot(p1, p2, cols=1)
+
+```
+
+Coding genotypes with low read depth (<3) as missing, results in an overall increase in missing data per locus and a shift in more individuals with missing data >90%; this is because individuals (and loci) with coverage issues are now characterized by higher missing data
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+
+iraw <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Raw.imiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(INDV, F_MISS) %>%
+dplyr::rename(Raw = F_MISS)
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F1.imiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(INDV, F_MISS) %>%
+dplyr::rename(F1 = F_MISS)
+
+imiss <- left_join(imiss, iraw)
+
+p1 <- ggplot(imiss, aes(x = Raw, y = F1)) +
+geom_point(shape = 1) +
+geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+labs(x = "Individual Missing Data, Raw", y = "Individual Missing Data, F1") +
+theme_standard
+
+lraw <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Raw.lmiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(CHR, POS, F_MISS) %>%
+dplyr::rename(Raw = F_MISS)
+
+lmiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F1.lmiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(CHR, POS, F_MISS) %>%
+dplyr::rename(F1 = F_MISS)
+
+lmiss <- left_join(lmiss, lraw)
+
+p2 <- ggplot(lmiss, aes(x = Raw, y = F1)) +
+geom_point(shape = 1) +
+geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+labs(x = "Loci Missing Data, Raw", y = "Loci Missing Data, F1") +
+theme_standard
+
+multiplot(p1, p2, cols=1)
+
+```
+
+## Filter 2: Convert variant calls into phased SNP and INDEL genotypes. Removes indels and phases SNPs.  
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcfallelicprimitives ./vcf/Spa_F1c.recode.vcf --keep-info --keep-geno > ./vcf/Spa_prim.vcf
+
+vcftools --vcf ./vcf/Spa_prim.vcf --out ./vcf/Spa_F2 --remove-indels --recode --recode-INFO-all
+
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --extract-FORMAT-info GT --out ./Stats/Spa_F2
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 337086 out of a possible 389303 Sites
+
+```
+
+Analyze stats post-filtering
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F2 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F2") 
+
+View(Ind_Stats_F2)
+
+Loci_Stats_F2 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F2")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F2, aes(x = MISS_Spa_F2)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Ind") +
+theme_standard
+
+# Plot read depth per individual
+
+p2 <- ggplot(Ind_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Ind") +
+theme_standard
+
+# Plot depth vs missing
+
+p3 <- ggplot(Ind_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2, y = MISS_Spa_F2)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Ind", y = "% Missing Data") +
+theme_standard
+
+# Plot Fis per individual
+
+p4 <- ggplot(Ind_Stats_F2, aes(x = Fis_Spa_F2)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F2, aes(x = MISS_Spa_F2)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2, y = MISS_Spa_F2)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+png("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/m2.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+```
+
+## Filter 3: Remove paralogous contigs identified in the haploid SNP dataset.
+
+Extract genotypes from working filter vcf. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf
+
+vcftools --vcf Spa_F2.recode.vcf --extract-FORMAT-info GT --out ../Stats/Spa_F2
+
+```
+
+Import dataset of paralogous contigs from the haploid dataset ("psv") and extract SNPs associated with these contigs from the adult sturgeon dataset. 
+
+```{r}
+
+MiSeq_parcontigs <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/psv", 
+                  stringsAsFactors = FALSE, header = TRUE)
+
+HiSeq_allcontigs <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F2.GT.FORMAT", 
+                  stringsAsFactors = FALSE, header = TRUE)
+
+HiSeq_allcontigs <- dplyr::select(HiSeq_allcontigs, CHROM, POS) 
+
+HiSeq_paralogs <- dplyr::inner_join(MiSeq_parcontigs, HiSeq_allcontigs, by = "CHROM")
+
+# Write SNPs to exclude to text file
+
+write.table(HiSeq_paralogs, file = "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/HiSeq_paralogs", 
+            col.names= TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove all SNPs on paralogous contigs in the adult sturgeon dataset.
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf
+
+vcftools --vcf Spa_F2.recode.vcf --out Spa_F3 --exclude-positions HiSeq_paralogs --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 266989 out of a possible 337086 Sites
+
+```
+
+Analyze stats post-filtering
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F3 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F3") 
+
+View(Ind_Stats_F3)
+
+Loci_Stats_F3 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F3")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F3, aes(x = MISS_Spa_F3)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Ind") +
+theme_standard
+
+# Plot read depth per individual
+
+p2 <- ggplot(Ind_Stats_F3, aes(x = MEAN_DEPTH_Spa_F3)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Ind") +
+theme_standard
+
+# Plot depth vs missing
+
+p3 <- ggplot(Ind_Stats_F3, aes(x = MEAN_DEPTH_Spa_F3, y = MISS_Spa_F3)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Ind", y = "% Missing Data") +
+theme_standard
+
+# Plot Fis per individual
+
+p4 <- ggplot(Ind_Stats_F3, aes(x = Fis_Spa_F3)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F3, aes(x = MISS_Spa_F3)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F3, aes(x = MEAN_DEPTH_Spa_F3)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F3, aes(x = MEAN_DEPTH_Spa_F3, y = MISS_Spa_F3)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F3, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+png("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/m3.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+```
+
+## Filter 4: Genotype call rate and allowed missing data per individual. 
+
+Remove loci with genotype call rate <30%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F3.recode.vcf --out ./vcf/Spa_F4a --max-missing 0.3 --min-meanDP 10 --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 95739 out of a possible 266989 Sites
+
+vcftools --vcf ./vcf/Spa_F4a.recode.vcf --out ./Stats/Spa_F4a --missing-indv
+
+```
+
+Flag individuals with > 95% missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4a.imiss", header = TRUE, stringsAsFactors = FALSE)
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.90, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.9) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4a_LQ.indv",
+col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove flagged individuals, then remove loci with genotype call rate <40%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F4a.recode.vcf --out ./vcf/Spa_F4b --remove ./Stats/Spa_F4a_LQ.indv --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 95739 out of a possible 95739 Sites
+
+vcftools --vcf ./vcf/Spa_F4b.recode.vcf --out ./vcf/Spa_F4c --max-missing 0.4  --recode --recode-INFO-all
+
+# After filtering, kept 111 out of 111 Individuals
+# After filtering, kept 95265 out of a possible 95739 Sites
+
+vcftools --vcf ./vcf/Spa_F4c.recode.vcf --out ./Stats/Spa_F4c --missing-indv
+
+```
+
+Identify individuals with high missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4c.imiss", header = TRUE, stringsAsFactors = FALSE)
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.6, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.6) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4c_LQ.indv", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+#RSS-031 has high missing data (~75%)
+
+```
+
+Remove flagged individuals
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F4c.recode.vcf --out ./vcf/Spa_F4d --remove ./Stats/Spa_F4c_LQ.indv --recode --recode-INFO-all
+
+# After filtering, kept 110 out of 111 Individuals
+# After filtering, kept 95265 out of a possible 95265 Sites
+
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4d --missing-indv
+
+```
+
+Identify individuals with >75% missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4d.imiss", 
+header = TRUE, stringsAsFactors = FALSE) 
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.4, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.4) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F4d_LQ.indv",
+col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+# 0 individuals have >75% missing data as expected
+
+```
+
+```{bash}
+
+# Stats
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4 --depth
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4 --missing-indv
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4 --missing-site
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./Stats/Spa_F4 --het
+
+```
+
+Analyze stats post-filtering
+
+```{r fig.height=14, fig.width=10, message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F4 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F4") 
+
+View(Ind_Stats_F3)
+
+Loci_Stats_F4 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F4")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F4, aes(x = MISS_Spa_F4)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Ind") +
+theme_standard
+
+# Plot read depth per individual
+
+p2 <- ggplot(Ind_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Ind") +
+theme_standard
+
+# Plot depth vs missing
+
+p3 <- ggplot(Ind_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4, y = MISS_Spa_F4)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Ind", y = "% Missing Data") +
+theme_standard
+
+# Plot Fis per individual
+
+p4 <- ggplot(Ind_Stats_F4, aes(x = Fis_Spa_F4)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F4, aes(x = MISS_Spa_F4)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4, y = MISS_Spa_F4)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+png("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/m4.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+```
+
+## Filter 5: Minimum depth and genotype call rate
+
+Remove loci with minimum mean depth across all individuals < 15 and genotype call rate of <75%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F4d.recode.vcf --out ./vcf/Spa_F5 --min-meanDP 15 --max-missing 0.75 --recode --recode-INFO-all
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 71029 out of a possible 95265 Sites
+
+# Stats
+
+vcftools --vcf ./vcf/Spa_F5.recode.vcf --out ./Stats/Spa_F5 --depth
+vcftools --vcf ./vcf/Spa_F5.recode.vcf --out ./Stats/Spa_F5 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F5.recode.vcf --out ./Stats/Spa_F5 --missing-indv
+vcftools --vcf ./vcf/Spa_F5.recode.vcf --out ./Stats/Spa_F5 --missing-site
+vcftools --vcf ./vcf/Spa_F5.recode.vcf --out ./Stats/Spa_F5 --het
+
+```
+
+Analyze stats post-filtering
+
+```{r fig.height=14, fig.width=10, message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F5 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F5")
+
+View(Ind_Stats_F5)
+
+Loci_Stats_F5 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F5")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F5, aes(x = MISS_Spa_F5)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Individual") +
+theme_standard
+
+# Plot Fis per individual
+
+p2 <- ggplot(Ind_Stats_F5, aes(x = Fis_Spa_F5)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot read depth per individuals
+
+p3 <- ggplot(Ind_Stats_F5, aes(x = MEAN_DEPTH_Spa_F5)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Individual") +
+theme_standard
+
+# Plot depth vs missing
+
+p4 <- ggplot(Ind_Stats_F5, aes(x = MEAN_DEPTH_Spa_F5, y = MISS_Spa_F5)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Individual", y = "% Missing Data") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F5, aes(x = MISS_Spa_F5)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F5, aes(x = MEAN_DEPTH_Spa_F5)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F5, aes(x = MEAN_DEPTH_Spa_F5, y = MISS_Spa_F5)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F5, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth per Locus", y = "% Missing Data") +
+theme_standard
+
+# Plot no of SNPs per locus
+
+p8 <- Loci_Stats_F5 %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs per Locus") +
+theme_standard
+
+temp <- Loci_Stats_F5 %>%
+dplyr::count(CHR)
+
+# Plot number of SNPs per contig vs. mean depth
+
+p9 <- left_join(temp, Loci_Stats_F5) %>%
+ggplot() +
+geom_point(aes(x = n, y = MEAN_DEPTH_Spa_F5)) +
+labs(x = "Number of SNPs per Contig", y = "Mean Depth") +
+theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, p8, p9, cols=2)
+
+```
+
+## Filter 6: Allele balance
+
+AB: Allele balance at heterozygous sites: a number between 0 and 1 representing the ratio of reads showing the reference allele to all reads, considering only reads from individuals called as heterozygous
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+
+cut -f8 Spa_F5.recode.vcf | grep -oe "AB=[[:digit:]].[[:digit:]][[:digit:]][[:digit:]]" | sed -s 's/AB=//g' > Spa_F5.AB
+
+```
+
+Allele balance is the ratio of reads for reference allele to all reads, considering only reads from individuals called as heterozygous. Values range from 0 - 1; allele balance (for real loci) should be approx. 0.5
+
+Filter contigs SNPs with allele balance < 0.35 and > 0.65
+
+```{r message=FALSE, warning=FALSE, fig.height=5, fig.width=5}
+
+read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F5.AB",
+col.names = "AB", stringsAsFactors = FALSE) %>%
+ggplot(aes(x = AB)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.5, color = "red", linetype = "dashed") +
+geom_vline(xintercept = 0.35, color = "red", linetype = "dashed") +
+geom_vline(xintercept = 0.65, color = "red", linetype = "dashed") +
+theme_standard
+
+```
+
+Filter contigs with SNP calls with AB > 0.35, AB < 0.65; retain loci very close to 0 (retain loci that are fixed variants)
+
+Remove genotypes if the quality sum of the reference or alternate allele was 0
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+
+vcffilter -s -f "AB > 0.35 & AB < 0.65 | AB < 0.01 | AB > 0.99" -s -g "QR > 0 | QA > 0" Spa_F5.recode.vcf > Spa_F6.vcf 
+
+mawk '!/#/' Spa_F6.vcf | wc -l
+
+# Stats
+
+vcftools --vcf ./Spa_F6.vcf --out ../Stats/Spa_F6 --depth
+vcftools --vcf ./Spa_F6.vcf --out ../Stats/Spa_F6 --site-mean-depth
+vcftools --vcf ./Spa_F6.vcf --out ../Stats/Spa_F6 --missing-indv
+vcftools --vcf ./Spa_F6.vcf --out ../Stats/Spa_F6 --missing-site
+vcftools --vcf ./Spa_F6.vcf --out ../Stats/Spa_F6 --het
+
+# After Filter 5, kept 43684 out of a possible 71029 sites
+# Large loss may reflect removal of additional paralogous loci 
+
+```
+
+## Filter 7: Mapping quality
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+  
+cut -f8 Spa_F6.vcf | grep -oe "MQM=[0-9]*" | sed -s 's/MQM=//g' > Spa_F6.MQM
+
+cut -f8 Spa_F6.vcf | grep -oe "MQMR=[0-9]*" | sed -s 's/MQMR=//g' > Spa_F6.MQMR
+
+```
+
+Remove loci based on ratio of mapping quality for reference and alternate allele, i.e. sites that have a high discrepancy between the mapping qualities of two alleles
+
+```{r message=FALSE, warning=FALSE, fig.height=5, fig.width=5}
+
+temp <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F6.MQM", col.names = "MQM")
+
+mapqual <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F6.MQMR", col.names = "MQMR")
+
+mapqual <- bind_cols(mapqual, temp) %>%
+  dplyr::mutate(ratio = MQM/MQMR)
+
+filter <- mapqual %>%
+  dplyr::filter(ratio < 0.25 | ratio > 1.75)
+
+ggplot(mapqual, aes(x = MQM, y = MQMR)) +
+  geom_point() + 
+  geom_abline(intercept = 0, slope = 1, size = 1, color = "red", linetype = "dashed") +
+  geom_abline(intercept = 0, slope = 4, size = 1, color = "red", linetype = "dashed") +
+  geom_abline(intercept = 0, slope = 0.571, size = 1, color = "red", linetype = "dashed") +
+  geom_point(data = filter, aes(x = MQM, y = MQMR), color = "red") +
+  scale_x_continuous(limits = c(0, 64)) +
+  theme_standard
+
+```
+
+Filter loci with mapping quality ratio < 0.25 and > 1.75
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+  
+vcffilter -s -f "MQM / MQMR > 0.25 & MQM / MQMR < 1.75" Spa_F6.vcf > Spa_F7.vcf
+
+mawk '!/#/' Spa_F7.vcf | wc -l
+
+# Stats
+
+vcftools --vcf ./Spa_F7.vcf --out ../Stats/Spa_F7 --depth
+vcftools --vcf ./Spa_F7.vcf --out ../Stats/Spa_F7 --site-mean-depth
+vcftools --vcf ./Spa_F7.vcf --out ../Stats/Spa_F7 --missing-indv
+vcftools --vcf ./Spa_F7.vcf --out ../Stats/Spa_F7 --missing-site
+vcftools --vcf ./Spa_F7.vcf --out ../Stats/Spa_F7 --het
+
+# After Filter 7, kept 43140 out of a possible 43684 sites
+
+```
+
+## Filter 8: Strand balance 
+
+SRF: Number of reference observations on the forward strand
+SAF: Number of alternate observations on the forward strand
+SRR: Number of reference observations on the reverse strand
+SAR: Number of alternate observations on the reverse strand
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+  
+cut -f8 Spa_F7.vcf | grep -oe "SAF=[0-9]*" | sed -s 's/SAF=//g' > Spa_F7.SAF
+
+cut -f8 Spa_F7.vcf | grep -oe "SAR=[0-9]*" | sed -s 's/SAR=//g' > Spa_F7.SAR
+
+cut -f8 Spa_F7.vcf | grep -oe "SRF=[0-9]*" | sed -s 's/SRF=//g' > Spa_F7.SRF
+
+cut -f8 Spa_F7.vcf | grep -oe "SRR=[0-9]*" | sed -s 's/SRR=//g' > Spa_F7.SRR
+
+```
+
+Paired end reads should not overlap, and a SNP site should only be covered by either the forward or reverse read
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=7}
+
+SAF <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F7.SAF",
+                  col.names = "SAF")
+
+SAR <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F7.SAR",
+                  col.names = "SAR")
+
+strands <- bind_cols(SAF, SAR)
+
+SRF <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F7.SRF",
+                  col.names = "SRF")
+
+strands <- bind_cols(strands, SRF)
+
+SRR <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F7.SRR",
+                  col.names = "SRR")
+
+strands <- bind_cols(strands, SRR) %>%
+  dplyr::mutate(ratioA = SAF/SAR, ratioR = SRF/SRR)
+
+
+p1 <- ggplot(strands, aes(x = SAF, y = SAR)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0.1, color = "red", linetype = "solid", size = 1) +
+  geom_abline(intercept = 0, slope = 100, color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+
+p2 <- ggplot(strands, aes(x = SRF, y = SRR)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0.1, color = "red", linetype = "solid", size = 1) +
+  geom_abline(intercept = 0, slope = 100, color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+
+p3 <- ggplot(strands, aes(x = SAR, y = SAF)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0.1, color = "red", linetype = "solid", size = 1) +
+  geom_abline(intercept = 0, slope = 100, color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+
+
+p4 <- ggplot(strands, aes(x = SRR, y = SRF)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0.1, color = "red", linetype = "solid", size = 1) +
+  geom_abline(intercept = 0, slope = 100, color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+  
+multiplot(p1, p2, p3, p4, cols=2)
+
+x1 <- data.frame(SAF/SAR) %>%
+  dplyr::filter(SAF>100)
+
+x2 <- data.frame(SRF/SRR) %>%
+  dplyr::filter(SRF>100)
+
+x3 <- data.frame(SAR/SAF) %>%
+  dplyr::filter(SAR>100)
+
+x4 <- data.frame(SRR/SRF) %>%
+  dplyr::filter(SRR>100)
+
+```
+
+Remove SNP sites that have > 100x more forward alternate reads than reverse alternate reads and > 100x more forward reverse reads than reverse alternate reads
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+  
+vcffilter -f "SAF / SAR > 100 & SRF / SRR > 100 | SAR / SAF > 100 & SRR / SRF > 100" -s Spa_F7.vcf > Spa_F8.vcf
+
+mawk '!/#/' Spa_F8.vcf | wc -l
+
+# Stats
+
+vcftools --vcf ./Spa_F8.vcf --out ../Stats/Spa_F8 --depth
+vcftools --vcf ./Spa_F8.vcf --out ../Stats/Spa_F8 --site-mean-depth
+vcftools --vcf ./Spa_F8.vcf --out ../Stats/Spa_F8 --missing-indv
+vcftools --vcf ./Spa_F8.vcf --out ../Stats/Spa_F8 --missing-site
+vcftools --vcf ./Spa_F8.vcf --out ../Stats/Spa_F8 --het
+
+# After Filter 8, kept 36746 out of a possible 43140 sites
+
+```
+
+## Filter 9: Properly Paired Status. If read fragments are not paired, an artifact may be present. Remove these. 
+
+PAIRED: Proportion of observed alternate alleles which are supported by properly paired read fragments
+PAIREDR: Proportion of observed reference alleles which are supported by properly paired read fragments
+
+Identify loci with only unpaired reads mapping to them - an artifact introduced due to de novo reference assembly
+
+Compare number of paired reads mapping the reference and the alternate alleles to identify discrepancy in the paired status for reads supporting reference and alternate alleles
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+  
+vcffilter -f "PAIRED > 0.05 & PAIREDR > 0.05 & PAIREDR / PAIRED < 1.75 & PAIREDR / PAIRED > 0.25 | PAIRED < 0.05 & PAIREDR < 0.05" -s Spa_F8.vcf > Spa_F9.vcf
+
+mawk '!/#/' Spa_F9.vcf | wc -l
+
+# Stats
+
+vcftools --vcf ./Spa_F9.vcf --out ../Stats/Spa_F9 --depth
+vcftools --vcf ./Spa_F9.vcf --out ../Stats/Spa_F9 --site-mean-depth
+vcftools --vcf ./Spa_F9.vcf --out ../Stats/Spa_F9 --missing-indv
+vcftools --vcf ./Spa_F9.vcf --out ../Stats/Spa_F9 --missing-site
+vcftools --vcf ./Spa_F9.vcf --out ../Stats/Spa_F9 --het
+
+# After Filter 9, kept 35745 out of a possible 36746 sites
+
+```
+
+## Filter 10: Maximum depth & Quality
+
+Identify distribution of depth (based on original data set) to identify loci with excess coverage
+
+Original number of individuals in data set is `r nrow(Ind_Raw_Stats)` (INFO flags in filtered data set are are based on original number of individuals in data set)
+
+Create file with the original site depth and quality score for each site
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/vcf/
+
+# Site depth
+  
+cut -f8 Spa_F9.vcf | grep -oe "DP=[0-9]*" | sed -s 's/DP=//g' > Spa_F9.DEPTH
+
+# Quality score
+
+mawk '!/#/'  Spa_F9.vcf | cut -f1,2,6 > Spa_F9.loci.qual
+
+```
+
+Calculate average depth and standard deviation
+
+```{r message=FALSE, warning=FALSE, fig.height=5, fig.width=5}
+
+# Depth
+
+depth <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F9.DEPTH",
+                    col.names = "depth")
+
+# Quality score
+
+qual <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F9.loci.qual",
+                   col.names = c("locus", "pos", "qual"))
+
+# Mean depth
+
+mean_depth <- base::mean(depth$depth)
+
+# Standard deviation
+
+std <- sd(depth$depth)
+
+# Calculate cutoff
+
+cutoff <- sum(mean_depth + (2*std))
+
+# Identify SNPs with excess (i.e. depth > mean depth + 1 standard deviation and quality score < 2x the depth at that site
+
+df <- bind_cols(qual, depth) %>%
+  dplyr::mutate(qualcutoff = 2*depth)
+
+Remove_Loci <- df %>%
+  dplyr::filter(depth > cutoff) %>%
+  dplyr::filter(qual < 2*depth)
+
+# Plot
+
+ggplot(df, aes(x = depth, y = qual)) +
+  geom_point() +
+  geom_point(data = Remove_Loci, aes(x = depth, y = qual), color = "red") +
+  geom_line(data = df, aes(x = depth, y = qualcutoff), color = "red",  linetype = "dashed", size = 1) +
+  geom_vline(xintercept = cutoff, color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+
+LQ <- Remove_Loci %>%
+  dplyr::select(locus, pos)
+
+write.table(LQ, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/LQ_F9.loci", 
+            col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+```
+
+Mean depth per locus (across all indivuals) is `r mean_depth` and the standard deviation is `r std` 
+
+Filter SNP site with depth > mean depth + 1 standard deviation = `r sum(mean_depth + 2*std)` and that have quality scores < 2x the depth at that site and output depth per site
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F9.vcf --exclude-positions ./vcf/LQ_F9.loci --recode --recode-INFO-all --out ./vcf/Spa_F10a
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 35704 out of a possible 35745 Sites
+
+vcftools --vcf ./vcf/Spa_F10a.recode.vcf --out ./Stats/Spa_F10a --site-mean-depth
+
+```
+
+Compare the distribution of mean depth per site averaged across individuals to determine cut-off value of sites with excessively high depth indicative of paralogs/multicopy loci
+
+```{r message=FALSE, warning=FALSE, fig.height=5, fig.width=5}
+
+# Calculate mean depth per site
+
+F10a_Depth <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F10a.ldepth.mean",
+                         header = TRUE, stringsAsFactors = FALSE)
+
+ggplot(F10a_Depth, aes(x = MEAN_DEPTH)) +
+  geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(MEAN_DEPTH, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(MEAN_DEPTH, .90)),
+             color = "blue", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(MEAN_DEPTH, .99)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Mean Depth Per Site") +
+  theme_standard
+
+quantile(F10a_Depth$MEAN_DEPTH, .95)
+# output = 145.264
+
+quantile(F10a_Depth$MEAN_DEPTH, .90)
+# output = 138.345
+
+```
+
+Cut-off for maximum mean read depth = 138
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F10a.recode.vcf --out ./vcf/Spa_F10b --max-meanDP 138 --recode --recode-INFO-all 
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 32053 out of a possible 35704 Sites
+
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./Stats/Spa_F10 --depth
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./Stats/Spa_F10 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./Stats/Spa_F10 --missing-indv
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./Stats/Spa_F10 --missing-site
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./Stats/Spa_F10 --het
+
+```
+
+Analyze stats post-filtering
+
+```{r message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F10 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F10")
+
+Loci_Stats_F10 <- read.loc.stats(dir = "../Data/Sequencing//SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F10")
+
+count(Loci_Stats_F10)
+
+count(distinct(Loci_Stats_F10, CHR))
+
+count(Ind_Stats_F10)
+
+```
+
+## Filter 11: Missing data and minimum depth per locus
+
+Assess individuals in terms of low coverage, high missing data, and frequency burden (i.e. distribution of the number of variants within each individual of a specific frequency)
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F10b.recode.vcf --out ./vcf/Spa_F11 --min-meanDP 15 --max-missing 0.9 --recode --recode-INFO-all
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 31069 out of a possible 32053 Sites
+
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --depth
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --missing-indv
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --missing-site
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --het
+vcftools --vcf ./vcf/Spa_F11.recode.vcf --out ./Stats/Spa_F11 --hardy
+
+```
+
+Analyze stats post-filtering
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F11 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F11")
+
+View(Ind_Stats_F11)
+
+Loci_Stats_F11 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats", vcf = "Spa_F11")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F11, aes(x = MISS_Spa_F11)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Ind") +
+theme_standard
+
+# Plot read depth per individual
+
+p2 <- ggplot(Ind_Stats_F11, aes(x = MEAN_DEPTH_Spa_F11)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Ind") +
+theme_standard
+
+# Plot depth vs missing
+
+p3 <- ggplot(Ind_Stats_F11, aes(x = MEAN_DEPTH_Spa_F11, y = MISS_Spa_F11)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Ind", y = "% Missing Data") +
+theme_standard
+
+# Plot Fis per individual
+
+p4 <- ggplot(Ind_Stats_F11, aes(x = Fis_Spa_F11)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F11, aes(x = MISS_Spa_F11)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F11, aes(x = MEAN_DEPTH_Spa_F11)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F11, aes(x = MEAN_DEPTH_Spa_F11, y = MISS_Spa_F11)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F11, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+png("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/m11.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+```
+
+### PCA
+
+Import filtered vcf file and perform PCA. 
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=7}
+
+library(vcfR)
+
+F11_vcf <- read.vcfR(file ="../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F11.recode.vcf")
+
+F11_Gen <- vcfR2genind(F11_vcf)
+
+# PCA With All Individuals
+
+X_All_F11 <-tab(F11_Gen, freq=TRUE, NA.method="mean")
+
+PCA_All_F11 <-dudi.pca(df = X_All_F11, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig_All_F11 <- eigenvalues(PCA_All_F11)
+
+plot.eigen.variance(eig_All_F11)
+
+# Plot
+
+PC_Inds_F11 <- PC.ind(PCA_All_F11) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+Und_Inds_F11 <- anti_join(Ind_Raw, PC_Inds_F11)
+
+PC_Inds_All_F11  <- PC.ind(PCA_All_F11) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`) %>%
+  left_join(Ind_Raw) %>%
+  separate(HiSeq_ID, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-temp)
+
+```
+
+Plots
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=14}
+
+# Make new column with a combination of species and management unit
+
+temp <- PC_Inds_All_F11 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE)
+
+# Plot by species and management unit
+
+p1 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species, fill = Species, color = Species)) +
+  geom_point(alpha = 0.75, size = 4) +
+  labs(x = paste("PC1:", round(eig_All_F11[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All_F11[2, 3], digits = 3), "%")) +
+  ggtitle("By Species") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+p2 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species_MU, fill = Species_MU, color = Species_MU)) +
+  geom_point(alpha = 0.75, size = 4) +
+  labs(x = paste("PC1:", round(eig_All_F11[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All_F11[2, 3], digits = 3), "%")) +
+  ggtitle("By Management Unit") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+
+multiplot(p1, p2, cols = 2)
+
+dev.off()
+
+multiplot(p1, p2, cols = 2)
+
+```
+
+## Fiter 12: HWE filter by population
+
+Download filter_hwe_by_pop.pl which applies the HWE filter by population. Produce popmap file. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Code/
+
+curl -L -O https://github.com/jpuritz/dDocent/raw/master/scripts/filter_hwe_by_pop.pl
+chmod +x filter_hwe_by_pop.pl
+
+./filter_hwe_by_pop.pl -v ../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F11.recode.vcf -p ./AS_HiSeq_popmap.txt -o ../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F12
+
+# Kept 30495 of a possible 31069 loci (filtered 574 loci)
+
+```
+
+## Filter 13: Missing Data by Region
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+# PLS_GPMU
+
+vcftools --vcf ./vcf/Spa_F12.recode.vcf --out ./vcf/PLS_GPMU --keep ./Stats/PLS_GPMU.ind  --recode --recode-INFO-all
+vcftools --vcf ./vcf/PLS_GPMU.recode.vcf --out ./Stats/PLS_GPMU --missing-site
+
+# PLS_CLMU
+
+vcftools --vcf ./vcf/Spa_F12.recode.vcf --out ./vcf/PLS_CLMU --keep ./Stats/PLS_CLMU.ind  --recode --recode-INFO-all
+vcftools --vcf ./vcf/PLS_CLMU.recode.vcf --out ./Stats/PLS_CLMU --missing-site
+
+# SVS_GPMU
+
+vcftools --vcf ./vcf/Spa_F12.recode.vcf --out ./vcf/SVS_GPMU --keep ./Stats/SVS_GPMU.ind  --recode --recode-INFO-all
+vcftools --vcf ./vcf/SVS_GPMU.recode.vcf --out ./Stats/SVS_GPMU --missing-site
+
+# SVS_CLMU
+
+vcftools --vcf ./vcf/Spa_F12.recode.vcf --out ./vcf/SVS_CLMU --keep ./Stats/SVS_CLMU.ind  --recode --recode-INFO-all
+vcftools --vcf ./vcf/SVS_CLMU.recode.vcf --out ./Stats/SVS_CLMU --missing-site
+
+```
+
+Compare missing data between populations
+
+```{r}
+
+library(plyr)
+
+# Create empty list
+
+Loci_Missing <- list()
+
+# Import missing data per locus
+
+Loci_Missing[[1]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/PLS_GPMU.lmiss", 
+                                header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(LIB = "PLS_GPMU")
+
+Loci_Missing[[2]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/PLS_CLMU.lmiss", 
+                                header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(LIB = "PLS_CLMU")
+
+Loci_Missing[[3]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/SVS_GPMU.lmiss", 
+                                header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(LIB = "SVS_GPMU")
+
+Loci_Missing[[4]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/SVS_CLMU.lmiss", 
+                                header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(LIB = "SVS_CLMU")
+
+# Create data frame with all information
+
+Loci_Missing <- ldply(Loci_Missing, data.frame)
+
+ggplot(Loci_Missing, aes(x = F_MISS)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(F_MISS, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Missing Data per Locus") +
+  facet_grid(LIB ~ .) +
+  theme_standard
+
+detach("package:plyr", unload=TRUE)
+
+```
+
+Identify loci with high missing data in each population
+
+```{r}
+
+# Identify loci with high missing data in each population
+
+SNPs <- dplyr::filter(Loci_Missing, F_MISS > 0.3) 
+
+dplyr::count(SNPs, LIB)
+
+SNPs <- SNPs %>%
+  dplyr::select(CHR, POS)
+
+# Write contig/position to text file, use file with vcftools to remove positions from dataset
+
+write.table(SNPs, file = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F12_LQ.loci", 
+            col.names= FALSE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove loci from data set
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F12.recode.vcf --out ./vcf/Spa_F13 --exclude-positions ./Stats/Spa_F12_LQ.loci --recode --recode-INFO-all
+
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --depth
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --missing-indv
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --missing-site
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --het
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./Stats/Spa_F13 --singletons
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 30475 out of a possible 30495 Sites
+
+```
+
+## Filter 14: Remove individuals with >25% missing data
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./vcf/Spa_F13 --missing-indv
+
+```
+
+Identify individuals with high missing data
+
+```{r}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F13.imiss", 
+                    header = TRUE, stringsAsFactors = FALSE) 
+
+View(imiss)
+
+ggplot(imiss, aes(x = F_MISS)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = quantile(F_MISS, 0.99, na.rm = TRUE)), color = "red", linetype = "dashed", size = 1) +
+  theme_standard
+
+LQ_Ind <- imiss %>%
+  dplyr::filter(F_MISS > 0.2) %>%
+  dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F13_LQ.indv",
+            col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove flagged individuals
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F13.recode.vcf --out ./vcf/Spa_F14 --remove ./vcf/Spa_F13_LQ.indv --recode --recode-INFO-all
+
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./Stats/Spa_F14 --depth
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./Stats/Spa_F14 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./Stats/Spa_F14 --missing-indv
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./Stats/Spa_F14 --missing-site
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./Stats/Spa_F14 --het
+
+# After filtering, kept 110 out of 110 Individuals
+# After filtering, kept 30475 out of a possible 30475 Sites
+
+```
+
+Analyze stats post-filtering
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F14 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F14") %>%
+  separate(INDV, into = c("Zone", "Lib_INDV"), sep ="_", remove=FALSE) %>%
+  separate(Lib_INDV, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-Lib_INDV) %>%
+  dplyr::select(-Zone) %>%
+  dplyr::select(-temp)
+
+View(Ind_Stats_F14)
+
+Loci_Stats_F14 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F14")
+
+```
+
+Compare change in missing data of loci and individuals
+
+```{r}
+
+library(plyr)
+
+# Import imiss
+
+# Create empty list
+
+imiss <- list()
+
+# Import missing data per locus
+
+imiss[[1]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Raw.imiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(INDV, F_MISS) %>%
+  dplyr::mutate(FIL = "raw")
+
+imiss[[2]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F1.imiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(INDV, F_MISS) %>%
+  dplyr::mutate(FIL = "F1")
+
+imiss[[3]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F2.imiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(INDV, F_MISS) %>%
+  dplyr::mutate(FIL = "F2")
+
+imiss[[4]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F14.imiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(INDV, F_MISS) %>%
+  dplyr::mutate(FIL = "F14")
+
+# Create data frame with all information
+
+imiss <- ldply(imiss, data.frame) %>%
+  spread(key = FIL, value = F_MISS)
+
+# Import lmiss
+
+# Create empty list
+
+lmiss <- list()
+
+# Import missing data per locus
+
+lmiss[[1]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Raw.lmiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(FIL = "raw")
+
+lmiss[[2]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F1.lmiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(FIL = "F1")
+
+lmiss[[3]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F2.lmiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(FIL = "F2")
+
+lmiss[[4]] <- read.table("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Spa_F14.lmiss", 
+                         header = TRUE, stringsAsFactors = FALSE) %>%
+  dplyr::select(CHR, POS, F_MISS) %>%
+  dplyr::mutate(FIL = "F14")
+
+# Create data frame with all information
+
+lmiss <- ldply(lmiss, data.frame) %>%
+  spread(key = FIL, value = F_MISS)
+
+# Plot
+
+p1 <- ggplot(imiss, aes(x = raw, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "iMiss Raw", y = "iMiss F14") +
+  theme_standard
+
+p2 <- ggplot(imiss, aes(x = F1, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "iMiss F1", y = "iMiss F14") +
+  theme_standard
+
+p3 <- ggplot(imiss, aes(x = F2, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "iMiss F2", y = "iMiss F14") +
+  theme_standard
+
+p4 <- ggplot(lmiss, aes(x = raw, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "lMiss Raw", y = "lMiss F14") +
+  theme_standard
+
+p5 <- ggplot(lmiss, aes(x = F1, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "lMiss F1", y = "lMiss F14") +
+  theme_standard
+
+p6 <- ggplot(lmiss, aes(x = F2, y = F14)) +
+  geom_point(shape = 1) +
+  geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "lMiss F2", y = "lMiss F14") +
+  theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, cols=3)
+
+detach("package:plyr", unload=TRUE)
+
+```
+
+## Filter 15: Analyze individuals by FIT
+
+Identify individuals by FIT (this is FIT rather than FIS because it is comparing allele frequencies of individuals to the whole dataset rather than to subpopulations)
+
+```{r}
+
+# Determine cutoff
+
+View(Ind_Stats_F14)
+
+# Boxplot of FIT per individual
+
+ggplot(Ind_Stats_F14, aes(y=Fis_Spa_F14)) + 
+  geom_boxplot(notch = TRUE) + 
+  geom_boxplot(outlier.colour = "red") +
+  ylim(-1.5, 1.5) +
+  theme_standard
+
+ggplot(Ind_Stats_F14, aes(x = Fis_Spa_F14)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = mean(Fis_Spa_F14, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "FIT", y = "Number of individuals") +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F14, 0.05, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F14, 0.95, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  xlim(-1, 1) +
+  theme_standard
+
+```
+
+Produce file with HiSeq_ID and FIT values.
+
+```{r}
+
+FIT_identity <- dplyr::select(Ind_Stats_F14, one_of(c("INDV", "Fis_Spa_F14"))) %>% 
+  rename(HiSeq_ID = INDV) %>% 
+  rename (FIT = Fis_Spa_F14)
+
+write.table(FIT_identity, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/FIT_identity.indv",
+            col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+### PCA
+
+Perform PCA to identify outlier individuals in context of specific species.
+
+Import filtered vcf file and perform PCA.
+
+```{r}
+
+library(vcfR)
+
+F15_vcf <- read.vcfR(file ="../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F14.recode.vcf")
+
+F15_Gen <- vcfR2genind(F15_vcf)
+
+# PCA With All Individuals
+
+X_All_F15 <-tab(F15_Gen, freq=TRUE, NA.method="mean")
+
+PCA_All_F15 <-dudi.pca(df = X_All_F15, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig_All_F15 <- eigenvalues(PCA_All_F15)
+
+plot.eigen.variance(eig_All_F15)
+
+# Plot
+
+PC_Inds_F15 <- PC.ind(PCA_All_F15) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+Und_Inds_F15 <- anti_join(Ind_Raw, PC_Inds_F15)
+
+PC_Inds_All_F15  <- PC.ind(PCA_All_F15) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`) %>%
+  left_join(Ind_Raw) %>%
+  separate(HiSeq_ID, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-temp)
+
+```
+
+Plots
+
+```{r}
+
+# Make new column with a combination of species and management unit
+
+FIT_identity <- FIT_identity %>% mutate(FIT_group=cut(FIT, breaks=c(-Inf, 0, Inf), labels=c("low","high")))
+
+temp <- dplyr::left_join(PC_Inds_All_F15, FIT_identity, by = "HiSeq_ID")
+
+write.table(FIT_identity, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/FIT_identity.indv",
+            col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+# Plot by FIT
+
+p1 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = FIT_group, fill = FIT_group, color = FIT_group)) +
+  geom_point(alpha = 0.75, size = 0.5) +
+  labs(x = paste("PC1:", round(eig_All_F15[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All_F15[2, 3], digits = 3), "%")) +
+  ggtitle("By FIT") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+plot(p1)
+
+# RSP-016 has high heterozygosity for pallids and groups with shovelnose
+
+```
+FIT showed that shovelnose have much more variation than pallids, but must independently analyze FIS per species to identify FIS outliers.
+
+FIS of pallids
+
+Remove all shovelnose individuals from analysis. Note: You need a file with shovelnose IDs that you want to exclude. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./vcf/Spa_F15a --remove ./vcf/ShovelnoseIDs --recode --recode-INFO-all
+
+vcftools --vcf ./vcf/Spa_F15a.recode.vcf --out ./Stats/Spa_F15a --depth
+vcftools --vcf ./vcf/Spa_F15a.recode.vcf --out ./Stats/Spa_F15a --site-mean-depth
+vcftools --vcf ./vcf/Spa_F15a.recode.vcf --out ./Stats/Spa_F15a --missing-indv
+vcftools --vcf ./vcf/Spa_F15a.recode.vcf --out ./Stats/Spa_F15a --missing-site
+vcftools --vcf ./vcf/Spa_F15a.recode.vcf --out ./Stats/Spa_F15a --het
+
+# After filtering, kept 58 out of 110 Individuals
+# After filtering, kept 30475 out of a possible 30475 Sites
+
+```
+
+Analyze stats post-filtering to identify FIS values for pallids. 
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F15a <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F15a") %>%
+  separate(INDV, into = c("Zone", "Lib_INDV"), sep ="_", remove=FALSE) %>%
+  separate(Lib_INDV, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-Lib_INDV) %>%
+  dplyr::select(-Zone) %>%
+  dplyr::select(-temp)
+
+View(Ind_Stats_F15a)
+
+mean(Ind_Stats_F15a$Fis_Spa_F15a)
+
+sd(Ind_Stats_F15a$Fis_Spa_F15a)
+
+Loci_Stats_F15a <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F15a")
+
+# Determine cutoff
+
+View(Ind_Stats_F15a)
+
+# Boxplot of FIS per individual for pallid sturgeon
+
+ggplot(Ind_Stats_F15a, aes(y=Fis_Spa_F15a)) + 
+  geom_boxplot(notch = TRUE) + 
+  geom_boxplot(outlier.colour = "red") +
+  ylim(-1.5, 1.5) +
+  theme_standard
+
+ggplot(Ind_Stats_F15a, aes(x = Fis_Spa_F15a)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = mean(Fis_Spa_F15a, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "FIS Per Individual") +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F15a, 0.05, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F15a, 0.95, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  xlim(-1, 1) +
+  theme_standard
+
+# Produce file with IDs and FIS values.
+
+FIS_identity_pallids <- dplyr::select(Ind_Stats_F15a, one_of(c("INDV", "Fis_Spa_F15a"))) %>% 
+  rename(HiSeq_ID = INDV) %>% 
+  rename (FIS = Fis_Spa_F15a)
+
+write.table(FIS_identity_pallids, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/FIS_identity_pallids",
+            col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+FIS of shovelnose
+
+Remove all shovelnose individuals from analysis. Note: You need a file with pallid IDs that you want to exclude. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./vcf/Spa_F15b --remove ./vcf/PallidIDs --recode --recode-INFO-all
+
+vcftools --vcf ./vcf/Spa_F15b.recode.vcf --out ./Stats/Spa_F15b --depth
+vcftools --vcf ./vcf/Spa_F15b.recode.vcf --out ./Stats/Spa_F15b --site-mean-depth
+vcftools --vcf ./vcf/Spa_F15b.recode.vcf --out ./Stats/Spa_F15b --missing-indv
+vcftools --vcf ./vcf/Spa_F15b.recode.vcf --out ./Stats/Spa_F15b --missing-site
+vcftools --vcf ./vcf/Spa_F15b.recode.vcf --out ./Stats/Spa_F15b --het
+
+# After filtering, kept 52 out of 110 Individuals
+# After filtering, kept 30475 out of a possible 30475 Sites
+
+```
+
+Analyze stats post-filtering to identify FIS values for shovelnose. 
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F15b <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F15b") %>%
+  separate(INDV, into = c("Zone", "Lib_INDV"), sep ="_", remove=FALSE) %>%
+  separate(Lib_INDV, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-Lib_INDV) %>%
+  dplyr::select(-Zone) %>%
+  dplyr::select(-temp)
+
+mean(Ind_Stats_F15b$Fis_Spa_F15b)
+
+sd(Ind_Stats_F15b$Fis_Spa_F15b)
+
+View(Ind_Stats_F15b)
+
+Loci_Stats_F15b <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F15b")
+
+# Determine cutoff
+
+View(Ind_Stats_F15b)
+
+# Boxplot of FIS per individual for shovelnose sturgeon
+
+ggplot(Ind_Stats_F15b, aes(y=Fis_Spa_F15b)) + 
+  geom_boxplot(notch = TRUE) + 
+  geom_boxplot(outlier.colour = "red") +
+  ylim(-1.5, 1.5) +
+  theme_standard
+
+ggplot(Ind_Stats_F15b, aes(x = Fis_Spa_F15b)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = mean(Fis_Spa_F15b, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "FIS Per Individual") +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F15b, 0.05, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(Fis_Spa_F15b, 0.95, na.rm = TRUE)),
+             color = "green", linetype = "dashed", size = 1) +
+  xlim(-1, 1) +
+  theme_standard
+
+# Produce file with IDs and FIS values.
+
+FIS_identity_shovelnose <- dplyr::select(Ind_Stats_F15b, one_of(c("INDV", "Fis_Spa_F15b"))) %>% 
+  rename(HiSeq_ID = INDV) %>% 
+  rename (FIS = Fis_Spa_F15b)
+
+write.table(FIS_identity_shovelnose, "../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/FIS_identity_shovelnose",
+            col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove unwanted individuals.
+
+```{bash}
+
+# Remove individual RSP-016 that is an outlier in pallids.
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F14.recode.vcf --out ./vcf/Spa_F15 --remove-indv RSP_016 --recode --recode-INFO-all
+
+# After filtering, kept 109 out of 110 Individuals
+# After filtering, kept 30475 out of a possible 30475 Sites
+
+```
+
+## Filter 16: Minimum depth (15) and genotype call rate (0.95)
+
+Remove loci with minimum mean depth across all individuals >15 and genotype call rate of <95%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_F15.recode.vcf --out ./vcf/Spa_F16 --min-meanDP 15 --max-missing 0.95 --recode --recode-INFO-all
+
+# Stats
+
+vcftools --vcf ./vcf/Spa_F16.recode.vcf --out ./Stats/Spa_F16 --depth
+vcftools --vcf ./vcf/Spa_F16.recode.vcf --out ./Stats/Spa_F16 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F16.recode.vcf --out ./Stats/Spa_F16 --missing-indv
+vcftools --vcf ./vcf/Spa_F16.recode.vcf --out ./Stats/Spa_F16 --missing-site
+vcftools --vcf ./vcf/Spa_F16.recode.vcf --out ./Stats/Spa_F16 --het
+
+# After filtering, kept 109 out of 109 Individuals
+# After filtering, kept 29593 out of a possible 30475 Sites
+
+```
+
+### PCA
+
+Import filtered vcf file and perform PCA.
+
+```{r}
+
+library(vcfR)
+
+F16_vcf <- read.vcfR(file ="../Data/Sequencing/SNP_Calling/HiSeq_1/vcf/Spa_F16.recode.vcf")
+
+F16_Gen <- vcfR2genind(F16_vcf)
+
+# PCA With All Individuals
+
+X_All_F16 <-tab(F16_Gen, freq=TRUE, NA.method="mean")
+
+PCA_All_F16 <-dudi.pca(df = X_All_F16, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig_All_F16 <- eigenvalues(PCA_All_F16)
+
+plot.eigen.variance(eig_All_F16)
+
+# Plot
+
+PC_Inds_F16 <- PC.ind(PCA_All_F16) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`)
+
+Und_Inds_F16 <- anti_join(Ind_Raw, PC_Inds_F16)
+
+PC_Inds_All_F16  <- PC.ind(PCA_All_F16) %>%
+  dplyr::rename(HiSeq_ID = `LIB_ID`) %>%
+  left_join(Ind_Raw) %>%
+  separate(HiSeq_ID, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-temp)
+
+```
+
+Plots
+
+```{r}
+
+# Make new column with a combination of species and management unit
+
+temp <- PC_Inds_All_F16 %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE)
+
+# Plot by species and management unit
+
+p1 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species, fill = Species, color = Species)) +
+  geom_point(alpha = 0.75, size = 1) +
+  labs(x = paste("PC1:", round(eig_All_F16[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All_F16[2, 3], digits = 3), "%")) +
+  ggtitle("By Species") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+p2 <- ggplot(temp , aes(x = Axis1, y = Axis2, label = Species_MU, fill = Species_MU, color = Species_MU)) +
+  geom_point(alpha = 0.75, size = 1) +
+  labs(x = paste("PC1:", round(eig_All_F16[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All_F16[2, 3], digits = 3), "%")) +
+  ggtitle("By Management Unit") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+
+multiplot(p1, p2, cols = 2)
+
+dev.off()
+
+multiplot(p1, p2, cols = 2)
+
+```
+## RAD_Haplotyper
+
+### First Run
+
+Prep files for haplotyping
+
+Create popmap as a tab-separated file of individuals and their population designation, with one individual per line
+
+This file is needed to write the genepop file, if not provided the script will run through the process but not write a genepop file and place into same folder rad_haplotyper.pl will be run from.
+
+```{r}
+
+popmap <- dplyr::select(temp, one_of(c("HiSeq_ID", "Species_MU")))
+
+write.table(popmap, "../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/popmap", 
+            col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+```
+
+Run Rad_Haplotyper
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+cp -v ./vcf/Spa_F16.recode.vcf ./Haplotyper/
+
+cd ../../HiSeq_1
+
+cp -v reference.fasta ../SNP_Calling/HiSeq_1/Haplotyper/
+
+cp -v *.bam ../SNP_Calling/HiSeq_1/Haplotyper/
+
+cp -v *.bam.bai ../SNP_Calling/HiSeq_1/Haplotyper/
+
+cd ../SNP_Calling/HiSeq_1/Haplotyper/
+
+rad_haplotyper.pl -v Spa_F16.recode.vcf -r reference.fasta -x 6 -z 3 -m 0.95 -g Spa_HiSeq1.gen -p popmap
+
+```
+
+### Second Run 
+
+Import stats files generated by haplotyper. 
+
+```{r}
+
+Hap_Stats <- read.hap.stats("../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/stats.out")
+
+Ind_Hap_Stats <- read.delim("../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/ind_stats.out",
+                            stringsAsFactors = FALSE)
+
+PropSuccessInd <- filter.ind.prop_success(Ind_Hap_Stats, 0.8)
+
+View(as.data.frame(PropSuccessInd))
+
+Hap_Ind_Fails <- PropSuccessInd
+
+write.table(Hap_Ind_Fails, "../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/Hap_Ind_Fails.ind",
+            col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+```
+
+Prep files for haplotyping
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/
+
+vcftools --vcf ../vcf/Spa_F16.recode.vcf --remove Hap_Ind_Fails.ind --out ../vcf/Spa_Frad --recode --recode-INFO-all
+
+vcfsamplenames ../vcf/Spa_Frad.recode.vcf > ../Stats/Spa_Hap.inds
+
+# After filtering, kept 109 out of 109 Individuals
+# After filtering, kept 29622 out of a possible 29622 Sites
+
+```
+
+## Filter 17: Genotype call rate (0.95)
+
+Remove loci with minimum genotype call rate of <95%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/HiSeq_1/
+
+vcftools --vcf ./vcf/Spa_Frad.recode.vcf --out ./vcf/Spa_F17 --max-missing 0.95 --recode --recode-INFO-all
+
+# Query stats
+
+vcftools --vcf ./vcf/Spa_F17.recode.vcf --out ./Stats/Spa_F17 --depth
+vcftools --vcf ./vcf/Spa_F17.recode.vcf --out ./Stats/Spa_F17 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F17.recode.vcf --out ./Stats/Spa_F17 --missing-indv
+vcftools --vcf ./vcf/Spa_F17.recode.vcf --out ./Stats/Spa_F17 --missing-site
+vcftools --vcf ./vcf/Spa_F17.recode.vcf --out ./Stats/Spa_F17 --het
+
+# 29622 SNPs in 109 individuals
+
+```
+
+Analyze stats post-filtering
+
+```{r}
+
+# Load stats files
+
+Ind_Stats_F17 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F17") %>%
+  separate(INDV, into = c("Zone", "Lib_INDV"), sep ="_", remove=FALSE) %>%
+  separate(Lib_INDV, into = c("temp", "HiSeq"), sep ="(?=[0-9])", remove = FALSE) %>%
+  dplyr::select(-Lib_INDV) %>%
+  dplyr::select(-Zone) %>%
+  dplyr::select(-temp)
+
+#View(Ind_Stats_F17)
+
+Loci_Stats_F17 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/", vcf = "Spa_F17")
+
+#View(Loci_Stats_F17)
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F17, aes(x = MISS_Spa_F17)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(MISS_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0.3),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Missing Data Per Individual") +
+  theme_standard
+
+# Plot Fis per individual 
+
+p2 <- ggplot(Ind_Stats_F17, aes(x = Fis_Spa_F17)) +
+  geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Fis_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Fis Per Individual") +
+  theme_standard
+
+# Plot read depth per individual
+
+p3 <- ggplot(Ind_Stats_F17, aes(x = MEAN_DEPTH_Spa_F17)) +
+  geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 20),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Mean Read Depth Per Individual") +
+  theme_standard
+
+# Plot depth vs missing
+
+p4 <- ggplot(Ind_Stats_F17, aes(x = MEAN_DEPTH_Spa_F17, y = MISS_Spa_F17)) +
+  geom_point() +
+  geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 20),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_hline(aes(yintercept = base::mean(MISS_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_hline(aes(yintercept = 0.5),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Mean Depth Per Individual", y = "% Missing Data") +
+  theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F17, aes(x = MISS_Spa_F17)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(MISS_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0.05),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "% Missing Data per Locus") +
+  theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F17, aes(x = MEAN_DEPTH_Spa_F17)) +
+  geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 20),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Mean Read Depth per Locus") +
+  theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F17, aes(x = MEAN_DEPTH_Spa_F17, y = MISS_Spa_F17)) +
+  geom_point() +
+  geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 20),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_hline(aes(yintercept = base::mean(MISS_Spa_F17, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_hline(aes(yintercept = 0.1),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Mean Depth per Locus", y = "% Missing Data") +
+  theme_standard
+
+# Plot no of SNPs per locus
+
+p8 <- Loci_Stats_F17 %>%
+  dplyr::count(CHR) %>%
+  ggplot(aes(x = n)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+  labs(x = "Number of SNPs per Locus") +
+  theme_standard
+
+temp <- Loci_Stats_F17 %>%
+  dplyr::count(CHR)
+
+# Plot number of SNPs per contig vs. mean depth
+
+p9 <- left_join(temp, Loci_Stats_F17) %>%
+  ggplot() +
+  geom_point(aes(x = n, y = MEAN_DEPTH_Spa_F17)) +
+  labs(x = "number of SNPs per contig", y = "Mean Depth") +
+  theme_standard
+
+p10 <- ggplot(Ind_Stats_F17, aes(x = Fis_Spa_F17, y = MISS_Spa_F17)) +
+  geom_point() +
+  labs(x = "Fis", y = "% Missing Data") +
+  theme_standard
+
+png("../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/m17.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, cols=2)
+
+```
+
+## Post-Haplotyping Analysis and Filtering
+
+Review Haplotyping Success
+
+Compare the number of loci filtered due to excess missing data or suspected paralogs to those that passed
+
+```{r}
+
+# Import stats files generated by haplotyper
+
+Hap_Stats <- read.hap.stats("../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/stats.out")
+
+Ind_Hap_Stats <- read.delim("../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/ind_stats.out",
+                            stringsAsFactors = FALSE)
+
+View(Ind_Hap_Stats)
+
+# View comparison of filtered vs. passed loci
+
+plot.filter.status(Hap_Stats)
+
+```
+
+Remove filtered loci from data set
+
+```{r}
+
+dplyr::count(Hap_Stats, Status == "FILTERED")
+
+Hap_Stats <- remove.filtered.haps(Hap_Stats)
+
+nrow(Hap_Stats)
+
+# 11469 loci passed haplotyping process
+# 364 loci failed
+
+plot.hap.stats(Hap_Stats)
+
+nrow(Ind_Hap_Stats)
+
+# Dataset contains 109 individuals
+
+plot.ind.hap.stats(Ind_Hap_Stats)
+
+```
+
+Identify threshold values to filter data set: proportion of individuals haplotyped
+
+```{r}
+
+ggplot(Hap_Stats, aes(x = Prop_Haplotyped)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Prop_Haplotyped, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0.8),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Proportion of Individuals Haplotyped") +
+  theme_standard
+
+```
+
+Flag loci successfully haplotyped in < 95% of individuals.
+
+```{r}
+
+# Number of loci called in <95% individuals
+
+dplyr::count(Hap_Stats, Prop_Haplotyped < 0.95)
+
+# Create vector of loci to remove (choose cut-off)
+
+Prop_Haplotyped <- filter.loci.prop_haplotyped(Hap_Stats, 0.95)
+
+length(Prop_Haplotyped)
+
+# 0 loci were flagged as genotype call rate <0.95
+
+```
+
+Possible paralogs per locus
+
+Loci are flagged as possible paralogs for an individual when more than the expected number of haplotypes based on the SNP genotype call (homozygote, heterozygote) are detected
+
+```{r}
+
+ggplot(Hap_Stats, aes(x = Poss_Paralog)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Poss_Paralog, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = (base::nrow(Ind_Hap_Stats)*0.01)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Putative Paralogs per Locus") +
+  theme_standard
+
+```
+
+Flag loci that are flagged as potential paralogs in > 0 individuals
+
+```{r}
+
+# Number of loci with Poss_Paralogs
+
+dplyr::count(Hap_Stats, Poss_Paralog > 0)
+
+# Create vector of loci to remove (choose cut-off)
+
+Poss_Paralogs <- filter.loci.paralogs(Hap_Stats, 0)
+
+length(Poss_Paralogs)
+
+# 125 loci were flagged as possible paralogs
+
+```
+
+Number of SNPs & Haplotypes per locus
+
+Each locus varies in the number of SNPs detected which determines the number of haplotypes expected in that population
+
+```{r}
+
+ggplot(Hap_Stats, aes(x = Sites)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Sites, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 25),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Number of SNPs per Contig") +
+  theme_standard
+
+```
+
+Filtering loci based on number of SNPs contained on that locus could bias the data set as loci with high recombination may be removed
+
+On the other hand, assuming an approximate length of 300 bp loci with more than 30 SNPs would mean that 10% of bases are a polymorphism
+
+Notice that with higher number of SNP sites, loci also more probable to have been flagged as possible paralogs in multiple individuals
+
+```{r}
+
+dplyr::count(Hap_Stats, Sites > 30)
+
+NoSNps <- filter.loci.noSNPs(Hap_Stats, 30)
+
+length(NoSNps)
+
+# 0 loci were flagged
+
+```
+
+Assuming that mutation is the only mechanism resulting in new haplotypes, the maximum expected number of haplotypes per locus is number of SNPs N + 1
+
+```{r}
+
+p1 <- ggplot(Hap_Stats, aes(x = Haplotypes)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Haplotypes, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = quantile(Haplotypes, .99)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Haplotypes per Locus", y = "Loci") +
+  theme_standard
+
+temp <- Hap_Stats %>%
+  dplyr::select(Locus, Sites, Haplotypes, Prop_Haplotyped, Low_Cov.Geno_Err, Poss_Paralog) %>%
+  dplyr::mutate(exp_sites = Sites + 1) %>%
+  dplyr::mutate(xtra = Haplotypes - Sites)
+
+p2 <- ggplot(temp, aes(x = Sites, y = Poss_Paralog)) +
+  geom_point() +
+  geom_hline(yintercept = 9, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 25, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "SNPs per Locus", y = "Possible Paralogs") +
+  theme_standard
+
+p3 <- ggplot(temp, aes(x = Sites, y = xtra)) +
+  geom_point() +
+  geom_hline(yintercept = 10, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 25, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "SNPs per Locus", y = "Extra Haplotypes") +
+  theme_standard
+
+p4 <- ggplot(temp, aes(x = xtra, y = Prop_Haplotyped)) +
+  geom_point(size = 1) +
+  geom_hline(yintercept = 0.9, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 10, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Extra Haplotypes", y = "Proportion of Individuals Haplotyped") +
+  theme_standard
+
+p5 <- ggplot(temp, aes(x = xtra, y = Low_Cov.Geno_Err)) +
+  geom_point(size = 1) +
+  geom_hline(yintercept = 9, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 10, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Extra Haplotypes", y = "Putative Genotyping Error") +
+  theme_standard
+
+p6 <- ggplot(temp, aes(x = xtra, y = Poss_Paralog)) +
+  geom_point(size = 1) +
+  geom_hline(yintercept = 9, color = "red", linetype = "dashed", size = 1) +
+  geom_vline(xintercept = 10, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Extra Haplotypes", y = "Putative Paralogs") +
+  theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, cols = 2)
+
+```
+
+Again, removing loci with unexpectedly high numbers of haplotypes may bias the data set, as loci with e.g. high recombination may be removed from the data set
+
+```{r}
+
+dplyr::count(temp, xtra >= 10)
+
+# Create vector of loci to remove
+
+NoHaps <- dplyr::filter(temp, xtra >= 10) 
+
+NoHaps <- NoHaps$Locus
+
+length(NoHaps)
+
+# 0 loci were flagged for excessive number of haplotypes compared to the number of SNPs at that locus
+
+```
+
+Low Coverage/Genotyping Error
+
+After combining SNPs on the same contig during the haplotyping process, it is possible to observe fewer than the expected number of haplotypes based on the genotype call (heterozygote/homozygote)
+
+When this occurs, that genotype is coded as missing. For each locus the number of individuals for which is it flagged as a potential genotyping error or suffering from null alleles due to low coverage detected for a given locus is recorded
+
+```{r}
+
+ggplot(Hap_Stats, aes(x = Low_Cov.Geno_Err)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Low_Cov.Geno_Err, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = (nrow(Ind_Hap_Stats)*0.01)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Putative Genotyping Error") +
+  theme_standard
+
+```
+
+Cut-off value to remove locus if flagged as potential genotyping error
+
+```{r}
+
+# Summary of count of possible genotyping errors
+
+dplyr::count(Hap_Stats, Low_Cov.Geno_Err > 0)
+
+# Create vector of loci to remove
+
+Geno_Err <- filter.loci.geno_err(Hap_Stats, 0)
+
+length(Geno_Err)
+
+# 211 loci were flagged as potentially affected by genotyping error
+
+```
+
+Flag problematic individuals
+
+Loci that are not successfully haplotyped in an individual due to missing data, complex locus, haplotyped genotype is higher/lower than SNP haplotype in a given individual are coded as missing for that individual
+
+Problematic individual can be identified as having an increased amount of missing data and a low proportion of successfully haplotyped loci
+
+```{r}
+
+ggplot(Ind_Hap_Stats, aes(x = Prop_Success)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Prop_Success, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = 0.8),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Proportion of Loci Successfully Haplotyped") +
+  theme_standard
+
+```
+
+Problem individuals can be identified by choosing a cut-off value for the minimum proportion of sucessfully haplotyped loci and excluding individuals below that threshold value
+
+```{r}
+
+# Count individuals above set threshold
+
+dplyr::count(Ind_Hap_Stats, Prop_Success < 0.8)
+
+# Create vector of indv to remove (choose cut-off)
+
+PropSuccessInd <- filter.ind.prop_success(Ind_Hap_Stats, 0.8)
+
+#View(as.data.frame(PropSuccessInd))
+
+```
+
+Possible paralogs per individual
+
+Individuals with high proportion of loci flagged as possible paralogs should be flagged as potential problem individuals
+
+```{r}
+
+ggplot(Ind_Hap_Stats, aes(x = Poss_Paralogs)) +
+  geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+  geom_vline(aes(xintercept = base::mean(Poss_Paralogs, na.rm = TRUE)),
+             color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = (nrow(Hap_Stats)*0.10)),
+             color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Putative Paralogs") +
+  theme_standard
+
+```
+
+Cut-off for individuals with loci flagged paralogs in > 10% of loci 
+
+```{r}
+
+# Count individuals above set threshold
+
+dplyr::count(Ind_Hap_Stats, Poss_Paralogs > (nrow(Hap_Stats)*0.1))
+
+# Create vector of indv to remove (choose cut-off)
+
+Poss_ParalogInd <- filter.ind.paralogs(Ind_Hap_Stats, (nrow(Hap_Stats)*0.1))
+
+#View(as.data.frame(Poss_ParalogInd))
+
+max(Ind_Hap_Stats$Poss_Paralogs, na.rm = TRUE)
+
+# 17 (highest number of flagged loci in an individual)
+
+round(max(Ind_Hap_Stats$Poss_Paralogs, na.rm = TRUE)/nrow(Hap_Stats), digits = 4)*100
+
+# 0.15
+
+```
+
+The highest number of flagged loci in an individual is 17, which is equivalent to 0.15% of loci
+
+
+### Filter haplotype file
+
+Read in Genepop
+
+Load genepop file with haplotyped loci.
+
+```{r}
+
+# Import genepop file
+
+Spa_HiSeq1.gen <- read.genepop(file = "../Data/Sequencing/SNP_Calling/HiSeq_1/Haplotyper/Spa_HiSeq1.gen",
+                       ncode = 3L, quiet = FALSE)
+
+```
+
+```{r}
+
+# Remove flagged loci
+
+Remove_Loci <- c(Poss_Paralogs, NoSNps, NoHaps, Geno_Err, Prop_Haplotyped)
+Spa_HiSeq1.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci)
+
+# Write list of removed loci to file to later remove from vcf file
+
+Remove_Loci <- as.data.frame(Remove_Loci)
+
+write.table(Remove_Loci, file = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/Post_Hap_Failed_Loci", 
+col.names= FALSE, row.names = FALSE, quote = FALSE)
+  
+# Remove flagged individuals
+
+Remove_Para_Ind <- c(Poss_ParalogInd, PropSuccessInd)
+View(Remove_Para_Ind)
+Spa_HiSeq1.gen <- gen.ind.rem.Ind(Spa_HiSeq1.gen, Remove_Para_Ind)
+
+# Remove individuals with low proportion haplotyped individuals
+
+Remove_Success_Ind <- PropSuccessInd
+#View(Remove_Success_Ind)
+Spa_HiSeq1.gen <- gen.ind.rem.Ind(Spa_HiSeq1.gen, Remove_Success_Ind)
+
+# Convert to data frame
+
+Spa_df<- genind2df(Spa_HiSeq1.gen, 
+                  usepop = TRUE,
+                  sep = ":", oneColPerAll = FALSE) %>%
+  select(-pop)
+
+nInd(Spa_HiSeq1.gen)
+
+# 109 individuals
+
+nLoc(Spa_HiSeq1.gen)
+
+# 11,145 loci (contigs)
+
+```
+
+# Remove monomorphic markers in entire dataset
+
+## Heterozygosity and HWE
+
+Generate summary statistics
+
+```{r, message=FALSE, warning=FALSE}
+
+# Import metadata 
+
+AS_HiSeq_Sample_Data <- read.csv("./AS_HiSeq_Sample_Data.csv")
+
+# Match individuals to metadata
+
+Spa_Inds <- as.data.frame(indNames(Spa_HiSeq1.gen)) %>%
+  rename(HiSeq_ID = `indNames(Spa_HiSeq1.gen)`)
+
+Filt_Sample_Data <- semi_join(AS_HiSeq_Sample_Data, Spa_Inds)
+
+Filt_Sample_Data <- Filt_Sample_Data %>%
+  unite("Species_MU", c("Species", "MU"), sep="_", remove =FALSE) %>% select(HiSeq_ID, Species_MU)
+
+# Assign strata and set population level to site
+
+strata(Spa_HiSeq1.gen) <- Filt_Sample_Data
+setPop(Spa_HiSeq1.gen) <- ~Species_MU
+
+# Generate genetic diversity stats
+
+GenDiv <- adegenet::summary(Spa_HiSeq1.gen)
+
+dat <- hierfstat:::.genind2hierfstat(Spa_HiSeq1.gen)
+GenDiv2 <- basic.stats(dat)
+
+```
+
+Compare observed (Ho) and expected (He) heterozygosity for all individuals across all populations.
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Observed heterozygosity per locus
+
+Ho <- as.data.frame(GenDiv$Hobs) %>% 
+  rownames_to_column("LOCUS") %>%
+  rename(Ho = `GenDiv$Hobs`)
+
+# Expected heterozygosity per locus
+
+Hs <- as.data.frame(GenDiv$Hexp) %>% 
+  rownames_to_column("LOCUS") %>%
+  rename(Hexp = `GenDiv$Hexp`)
+
+# Expected and observed heterozysity per locus
+
+Het <- left_join(Ho, Hs, by = "LOCUS")
+
+# Plot Ho vs Hs across all individuals
+
+Het_Plot1 <- ggplot(Het, aes(x = Ho, y = Hexp)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", size = 1) +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  labs(x = "Observed Heterozygosity Ho", y = "Within Cluster Diversity Hs (Hexp)") +
+  ggtitle("Pre HWE Filter") +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+Het_Plot1
+
+```
+
+Identify loci that are now monomorphic and remove from data set
+  
+```{r monomorphic}
+
+monomorphic <- filter(Ho, Ho == 0)
+
+# Remove flagged loci
+
+Remove_Loci <- monomorphic$LOCUS
+Spa_HiSeq1.gen <- genind.rem.loci(Spa_HiSeq1.gen, Remove_Loci)
+
+Remove_Loci <- as.data.frame(Remove_Loci)
+
+write.table(Remove_Loci, file = "../Data/Sequencing/SNP_Calling/HiSeq_1/Stats/monomorphicloci", 
+col.names= FALSE, row.names = FALSE, quote = FALSE)
+
+nInd(Spa_HiSeq1.gen)
+
+# 109 individuals
+
+nLoc(Spa_HiSeq1.gen)
+
+# 11,082 loci (contigs)
+
+```
+
+# Make new genepop file
+
+```{r}
+
+# Export genepop
+
+Spa_HiSeq1.gen
+
+writeGenPop(Spa_HiSeq1.gen, file.name = "../Results/HiSeq_1/Spa_HiSeq1.gen", comment = "Spa_HiSeq1")
+
+```

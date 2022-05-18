@@ -1,0 +1,1760 @@
+---
+title: "Haploid Sturgeon MiSeq"
+authors: R. Flamio and D. Swift
+updated: July 13, 2020
+output: 
+  html_notebook: 
+    fig_height: 7
+    fig_width: 7
+    toc: yes
+---
+
+This script outlines a workflow which covers the following: data download, demultiplexing, demultiplexing analysis, preparing files for dDocent, trimming, reference building, mapping, and mapping analysis
+  
+### Packages
+
+```{r}
+
+setwd("/home/shared/Sturgeon/Code")
+
+.libPaths("/usr/lib64/R/library")
+
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(rmarkdown)
+library(adegenet)
+library(sp)
+library(ggplot2)
+library(tibble)
+library(hierfstat)
+library(pegas)
+library(readGenalex)
+library(related)
+library(Cairo)
+#library(stringr)
+library(ggthemes)
+#library(rgdal)
+#library(mmod)
+#library(LEA)
+#library(Imap)
+library(conflicted)
+#library(rlang)
+library(radiator)
+
+conflict_prefer("count", "dplyr")
+conflict_prefer("arrange", "dplyr")
+conflict_prefer("mutate", "dplyr")
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+conflict_prefer("rename", "dplyr")
+conflict_prefer("summarise", "dplyr")
+conflict_prefer("summarize", "dplyr")
+
+source("ggplot.R")
+source("genind.R")
+source("HaplotypR.R")
+source("PCA.R")
+#source("libraries.R")
+source("DAPC.R")
+source("VCFfilterstats.R")
+#source("pairwisefst.R")
+
+
+col7 <- c('#1b9e77','#d95f02','#7570b3','#e7298a','#66a61e','#e6ab02','#a6761d')
+
+```
+
+### Download Data from Genewiz
+
+```{bash}
+
+# Open terminal
+
+# Log in using username and password given by Genewiz
+
+sftp hri_marine_genomics_lab_gmail@sftp.genewiz.com
+
+# Set local drive where you wish to download your project's files
+
+lcd /home/DATA/STURGEON/
+
+# Move into directory on Genewiz server which contains your project files
+
+cd 30-286389934/00_fastq/
+
+# Download all files
+
+mget *
+
+```
+
+### Demultiplex MiSeq 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+ process_radtags -1 /home/DATA/STURGEON/DP01-Spla-MiSeq_R1_001.fastq.gz -2 /home/DATA/STURGEON/DP01-Spla-MiSeq_R2_001.fastq.gz -b ../../../Code/Spla_MiSeq_Barcodes.txt --renz_2 mspI --renz_1 ecoRI -i gzfastq -E phred33 -r
+ 
+# 23757538 total sequences
+# 652124 ambiguous barcode drops
+# 0 low quality read drops
+# 172377 ambiguous RAD-Tag drops
+# 22933037 retained reads
+
+```
+
+### Analyze Retained Reads
+
+```{r}
+
+rm(l)
+
+l<-list()
+
+Lib <- "MiSeq"
+No_Samples <- 12
+
+l[["MiSeq"]] <- read_table2("../Data/Sequencing/MiSeq/process_radtags.log",
+                             skip = 13, n_max = No_Samples,
+                             col_names = c("BARCODE", "ALL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+  dplyr::mutate(PROP_RETAINED = RETAINED/ALL_READS,
+                LIBRARY = Lib) %>%
+  dplyr::select(LIBRARY, BARCODE, PROP_RETAINED, ALL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+  dplyr::mutate(TOTAL_READS = sum(ALL_READS))
+
+# Create single data frame
+
+radtagslog <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`, LQ_READS)
+
+write.csv(radtagslog, "../Results/MiSeq/MiSeq_radtags.csv")
+
+print(radtagslog)
+
+```
+
+### Rename for dDocent
+
+Rename files with individual IDs
+
+```{bash}
+  
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+dos2unix ../../../Code/Spla_MiSeq_IDs_Barcodes.txt
+  
+Rename_for_dDocent.sh ../../../Code/Spla_MiSeq_IDs_Barcodes.txt
+
+rm *rem.*
+
+```
+
+### Trim Reads Using dDocent
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+dDocent ../../../Code/trim_config.file
+
+```
+
+### Reference Optimization, c Value
+
+Assemble references from an interval of cutoff (K) values and c values (0.8-0.98). The parameters are minimum K1, maximum K1, minimum K2, maximum k2, type of assembly (single end, paired end, overlapping), and number of processes. We will use 'OL' because we have MiSeq data with overlapping reads. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+../../../Code/ReferenceOpt.sh 1 6 1 6 OL 40
+
+```
+
+### Output from `ReferenceOpt.sh`
+
+Average contig number = 35920
+
+The top three most common number of contigs
+X       Contig number
+2       45200
+2       31307
+2       27694
+
+The top three most common number of contigs (with values rounded)
+X       Contig number
+4       45200.0
+4       40700.0
+4       36300.0
+
+### Choose c Value
+
+```{r fig.height=7, fig.width=7, message=FALSE}
+
+# Import kopt.data
+
+kopt.data <- read_table2("../Data/Sequencing/MiSeq/kopt.data", col_names = c("K1", "K2", "c", "Contigs")) %>%
+  unite("Combinations", c("K1", "K2"), sep="-", remove = FALSE)
+  
+plot.kopt.data <- read_table2("../Data/Sequencing/MiSeq/plot.kopt.data", col_names = "Contigs")
+
+# K Plot Overview: Plot number of reads for each value of c and K1/K2 combination
+
+ggplot(kopt.data, aes(x = c, y = Contigs)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(K1 ~ K2, labeller=label_both) +
+  labs(x = "% Similarity (c)", y = "Number of Contigs in Reference") +
+  scale_x_continuous(breaks = seq(0.8, 0.98, by = 0.1)) +
+  theme_standard
+
+# Plot K1 vs number contigs in reference for each K2 
+
+ggplot(kopt.data, aes(x = K1, y = Contigs,  color = K2)) + 
+  geom_point() +
+  scale_x_continuous(breaks = seq(1, 6, by = 1)) +
+  theme_standard
+
+# Plot number of reads vs c for specific combinations of K1 and K2
+
+ggplot(kopt.data, aes(x = c, y = Contigs, color = Combinations)) +
+  geom_point(data = subset(kopt.data, K1 == 1 & K2 ==2)) + 
+  geom_line(data = subset(kopt.data, K1 == 1 & K2 == 2)) +
+  geom_point(data = subset(kopt.data, K1 == 1 & K2 == 3)) +
+  geom_line(data = subset(kopt.data, K1 == 1 & K2 == 3)) +
+  geom_point(data = subset(kopt.data, K1 == 1 & K2 ==4)) + 
+  geom_line(data = subset(kopt.data, K1 == 1 & K2 == 4)) +
+  geom_point(data = subset(kopt.data, K1 == 1 & K2 == 5)) +
+  geom_line(data = subset(kopt.data, K1 == 1 & K2 == 5)) +
+  geom_line(data = subset(kopt.data, K1 == 1 & K2 == 6)) +
+  geom_point(data = subset(kopt.data, K1 == 1 & K2 == 6)) +
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 1)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 1)) + 
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 2)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 2)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 3)) +
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 3)) +
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 4)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 4)) +
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 5)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 5)) + 
+  geom_line(data = subset(kopt.data, K1 == 2 & K2 == 6)) +
+  geom_point(data = subset(kopt.data, K1 == 2 & K2 == 6)) +
+  scale_x_continuous(breaks = seq(0.8, 0.98, by = 0.02)) +
+  xlab("% Similarity (c)") +
+  ylab("Number of Contigs in Reference") +
+  theme_standard
+
+# Plot a histogram of contigs in references
+
+ggplot(kopt.data, aes(x=Contigs)) + 
+  geom_histogram(binwidth=1000, color="black", fill="white") +
+  geom_vline(aes(xintercept=mean(Contigs)), color="darkblue", linetype="dashed", size=1) +
+  geom_vline(aes(xintercept=median(Contigs)), color="red", linetype="dashed", size=1) +
+  theme_standard
+
+mean(kopt.data$Contigs)
+median(kopt.data$Contigs)
+
+# Plot a boxplot of contigs in references
+
+ggplot(kopt.data, aes(x=c, y=Contigs, group = c)) + 
+  geom_boxplot() +
+  scale_x_continuous(breaks = seq(0.8, 0.98, by = 0.02)) +
+  xlab("% Similarity (c)") +
+  ylab("Number of Contigs in Reference") +
+  theme_standard
+
+# Produce dataset of low, medium, and high levels of contigs for each c value based on minimum, mean, and maximum values from boxplot
+
+box <- boxplot(kopt.data$Contigs ~ kopt.data$c, plot=F)
+
+quart <- cbind(as.numeric(noquote(box$names)), box$stat[1,], box$stat[3,], box$stat[5,])
+quart <- data.frame(quart)
+colnames(quart) <- c("c","Low", "Medium", "High")
+
+quart_mat <- quart %>%
+    gather(key = Level, value = Contigs, 2:4)
+
+# PLot c vs. number of contigs for each level
+
+ggplot(quart_mat, aes(x = c, y = Contigs, color = Level)) +
+  geom_point(data = subset(quart_mat, Level == "Low")) + 
+  geom_line(data = subset(quart_mat, Level == "Low")) + 
+  geom_point(data = subset(quart_mat, Level == "Medium")) + 
+  geom_line(data = subset(quart_mat, Level == "Medium")) + 
+  geom_point(data = subset(quart_mat, Level == "High")) + 
+  geom_line(data = subset(quart_mat, Level == "High")) + 
+  scale_x_continuous(breaks = seq(0.8, 0.98, by = 0.02)) +
+  scale_y_continuous(breaks = seq(10000, 80000, by = 5000)) +
+  theme_standard
+
+# Produce dataframe showing difference in number of contigs among c value indices
+
+High <- as.numeric(diff(quart[,4], lag=1))
+Medium <- as.numeric(diff(quart[,3], lag=1))
+Low <- as.numeric(diff(quart[,2], lag=1))
+Indices <- as.vector(c("0.80-0.82", "0.82-0.84", "0.84-0.86", "0.86-0.88", "0.88-0.90", "0.90-0.92", "0.92-0.94", "0.94-0.96", "0.96-0.98"))
+
+Lag1 <- as.data.frame(cbind(Indices, Low, Medium, High)) %>%
+    gather(key = Level, value = Difference, 2:4)
+
+# Produce dataframe showing difference in difference number of contigs among c value indices
+
+High_Lag <- as.numeric(diff(High, lag=1))
+Medium_Lag <- as.numeric(diff(Medium, lag=1))
+Low_Lag <- as.numeric(diff(Low, lag=1))
+
+Lag2 <- as.data.frame(cbind(Indices, Low_Lag, Medium_Lag, High_Lag)) %>%
+    gather(key = Level, value = Difference, 2:4)
+
+# Plots
+
+p1 <- ggplot(Lag1, aes(x = Indices, y = as.numeric(Difference), color = Level)) +
+  geom_point(data = subset(Lag1, Level == "Low")) +
+  geom_point(data = subset(Lag1, Level == "Medium")) + 
+  geom_point(data = subset(Lag1, Level == "High")) + 
+  scale_y_continuous(breaks = seq(-2000, 7000, by = 1000)) +
+  ylab("Difference") +
+  theme_standard
+
+p2 <- ggplot(Lag2, aes(x = Indices, y = as.numeric(Difference), color = Level)) +
+  geom_point(data = subset(Lag2, Level == "Low_Lag")) +
+  geom_point(data = subset(Lag2, Level == "Medium_Lag")) + 
+  geom_point(data = subset(Lag2, Level == "High_Lag")) + 
+  scale_y_continuous(breaks = seq(-5000, 10000, by = 1000)) +
+  ylab("Difference") +
+  theme_standard
+
+multiplot(p1, p2, cols = 1)
+
+```
+
+Choose **c = 0.9**  
+
+### Reference Optimization, K1 & K2
+
+After choosing optimum similarity value (c), `RefMapOpt.sh` assembles references across and evaluates mappings to the reference, along with number of contigs and coverage. The parameters are minimum K1, maximum K1, minimum K2, maximum k2, c value, number of processes, and type of assembly (single end, paired end, overlapping). We will use 'OL' because we have MiSeq data with overlapping reads.
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+../../../Code/RefMapOpt.sh 1 6 1 6 0.9 OL 48
+
+```
+
+### Choose K1/K2 Combinations
+
+After choosing optimum similarity value (c), run script to create references for range of K1 and K2 values, and test mapping efficiency using a subset of HiSeq sequences. 
+
+K ranges used:
+K1: 1-5
+K2: 2-5
+
+```{r}
+
+# Import mapping.results
+
+mapping.results <- read_table2("../Data/Sequencing/MiSeq/mapping.results") %>%
+  unite("K_Combo", c("K1", "K2"), sep="_")
+
+```
+
+We want to choose a K1 and K2 which maximize properly mapped reads, the mean number of contigs mapped, and the coverage.
+
+## Build Reference
+
+Use dDocent to build a reference with c = 0.9, K1 = 1, and K2 = 3.
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+dDocent ../../../Code/assembly_config.file
+
+# 60846 contigs
+
+```
+
+
+## Map Trimmed Reads to the Reference
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+dDocent ../../../Code/map.file 
+
+```
+
+## Mapping Analysis
+
+Gather flagstats produced from read mapping
+
+```{r}
+
+l<-list()
+
+l[["MS"]]<-read_table2("/home/shared/Sturgeon/Data/Sequencing/MiSeq/bamlist.list", col_names = "BAM") %>%
+  dplyr::mutate(PATH = "/home/shared/Sturgeon/Data/Sequencing/MiSeq/",
+                COMMAND = "samtools flagstat",
+                OUT = ">> /home/shared/Sturgeon/Data/Mapping/MiSeq/flagstats/MiSeq.flagstats") %>%
+  dplyr::select( COMMAND, PATH, BAM, OUT) %>%
+  unite(FILE, 2:3, sep = "")
+
+library(plyr)
+
+bam <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`)
+
+write_delim(bam, "./flagstats.sh", delim = "\t", col_names = FALSE)
+
+detach("package:plyr", unload=TRUE)
+
+```
+
+Run Flagstats
+
+```{bash}
+
+cd /home/shared/Sturgeon/Code
+
+chmod 755 flagstats.sh
+./flagstats.sh
+
+```
+
+Run idxstats
+
+```{r script idxstats}
+
+l<-list()
+
+l[["MS"]]<-read_table2("/home/shared/Sturgeon/Data/Sequencing/MiSeq/bamlist.list", col_names = "BAM") %>%
+  dplyr::mutate(PATH = "/home/shared/Sturgeon/Data/Sequencing/MiSeq/",
+                COMMAND = "samtools idxstats",
+                OUT = ">> /home/shared/Sturgeon/Data/Mapping/MiSeq/idxstats/MiSeq.idxstats") %>%
+  dplyr::select( COMMAND, PATH, BAM, OUT) %>%
+  unite(FILE, 2:3, sep = "")
+
+library(plyr)
+
+bam <- ldply(l, data.frame) %>%
+  dplyr::select(-`.id`)
+
+write_delim(bam, "./idxstats.sh", delim = "\t", col_names = FALSE)
+
+```
+
+Run indxstats
+
+```{bash run idxstats, eval=FALSE, include=FALSE}
+
+cd /home/shared/Sturgeon/Code
+
+chmod 755 idxstats.sh
+./idxstats.sh
+
+```
+
+Format stats files into tidy datasets
+
+```{r format idx stats}
+
+# Create vectors of files to be imported, reference codes, K1 and K2, dataframe names
+
+filenames<-list.files(path = "../Data/Mapping/MiSeq/idxstats", pattern="*.idxstats")
+names<-substr(filenames, 1, 9)
+lib<-substr(filenames, 1, 5)
+
+# Import data
+
+for (i in names){
+  filepath<-file.path("../Data/Mapping/MiSeq/idxstats", paste(i, 'stats', sep=""))
+  assign(i, read.table(filepath, sep="", header=FALSE,
+                       col.names=c("Locus", "Length", "Reads_Mapped", 'blank')) %>%
+           dplyr::select(1:3))
+}
+
+# If re-running code, make sure to delete old list first
+
+rm(dflist_idx)
+rm(MapStats.idx)
+
+# Create list of one dataframe per idxstats file and group by locus
+
+dflist_idx <- lapply(ls(pattern = "*.idx"), get)
+
+for (df in 1:length(dflist_idx)){
+  x<-dflist_idx[[df]]
+  x[['Locus']]<-as.character(x[['Locus']])
+  x = x %>% group_by(Locus)
+  dflist_idx[[df]] <- x
+}
+
+# Create new dataframes with summary stats per library and bind into final output/dataframe
+
+MapStats.idx <- data.frame()
+
+for (df in 1:length(dflist_idx)){
+  
+  x = dplyr::summarize(dflist_idx[[df]],
+                       Length = base::mean(Length),
+                       Mean_Mapped = base::mean(Reads_Mapped),
+                       Sum_Mapped = sum(Reads_Mapped),
+                       Min_Mapped = sum(Reads_Mapped),
+                       Max_Mapped = sum(Reads_Mapped),
+                       SD_Mapped = sd(Reads_Mapped))
+  
+  x[x == 0] <- NA
+  
+  temp <- dplyr::summarize(x, Mean_Mapped_Non0 = base::mean(Mean_Mapped, na.rm = TRUE)) %>%
+    dplyr::mutate(Lib = lib[df],
+                  Not_Mapped = nrow(dplyr::filter(x, is.na(Sum_Mapped))),
+                  N_Loci_Ref = nrow(x)) %>%
+    dplyr::select(Lib, N_Loci_Ref, Not_Mapped, Mean_Mapped_Non0)
+  
+  MapStats.idx <- bind_rows(MapStats.idx, temp)
+}
+
+MapStats.idx <- MapStats.idx %>%
+  dplyr::mutate(PROP_EMPTY = round(Not_Mapped/N_Loci_Ref*100, digits = 2),
+                CONTIGS_MAPPED = N_Loci_Ref - Not_Mapped)
+
+write.table(MapStats.idx, "../Results/MiSeq/MapStats.idx", quote = FALSE)
+
+MapStats.idx <- read.table("../Results/MiSeq/MapStats.idx")
+View(MapStats.idx)
+
+# Remove large duplicate files
+
+rm(MiSeq.idx)
+
+```
+
+Format flagstats
+
+```{r, format flagstats}
+
+# Files to be imported
+
+filenames <- list.files(path='../Data/Mapping/MiSeq/flagstats', pattern = '*.flagstats')
+
+# Create vectors of files to be imported
+
+names <- substr(filenames, 1, 10)
+lib<-substr(filenames, 1, 5)
+
+# Import data
+
+for (i in names){
+  filepath <- file.path('../Data/Mapping/MiSeq/flagstats', paste(i, 'stats', sep =""))
+  assign(i, read.csv(filepath, sep = "+", header = FALSE,
+                     col.names = c("N_Reads", "CAT"),
+                     stringsAsFactors = FALSE) %>%
+           dplyr::select(1:2))
+}
+
+# Create list of one dataframe per flagstats file and create tidy data set (should be 3 elements/libraries)
+
+rm(dflist_flag)
+dflist_flag <- lapply(ls(pattern = "*flag"), get)
+
+# Change N_Reads to numeric
+
+for (df in 1:length(dflist_flag)){
+  x <- dflist_flag[[df]]
+  x[['N_Reads']] <- as.numeric(x[['N_Reads']])
+  dflist_flag[[df]] <- x
+}
+
+for (df in 1:length(dflist_flag)){
+  x <- dflist_flag[[df]]
+  
+  n <- nrow(x)/14
+  
+  x <- x %>%
+    dplyr::filter(grepl("0 mapped|properly paired|mapQ>=5", CAT)) %>%
+    dplyr::mutate(MAPSTAT = ifelse(grepl("mapQ>=5", CAT), "Mismatch",
+                                   ifelse(grepl("properly", CAT), "Prop_Paired", "Mapped"))) %>%
+    dplyr::mutate(Ind = c(rep(1:n, each = 3))) %>% 
+    # not sure if extra individual in there somehow
+    dplyr::select(4, 3, 1) %>%
+    spread(MAPSTAT, N_Reads)
+  
+  dflist_flag[[df]] <- x
+}
+
+# Create new dataframes with summary stats and add to main final data frame
+
+MapStats.flag <- data.frame()
+
+for (df in 1:length(dflist_flag)){
+  x = dplyr::summarize(dflist_flag[[df]], Sum_Mapped = sum(Mapped),
+                       Reads_Mapped = base::mean(Mapped),
+                       Sum_Paired = sum(Prop_Paired),
+                       Mean_Paired = base::mean(Prop_Paired),
+                       Sum_Mismatch = sum(Mismatch),
+                       Mean_Mismatch = base::mean(Mismatch)) %>%
+    dplyr::mutate(Lib = lib[df]) %>%
+    dplyr::select(7, 1:7)
+  MapStats.flag <- bind_rows(MapStats.flag, x)
+}
+
+# Write to file
+
+write.table(MapStats.flag, "../Results/MiSeq/MapStats.flag", quote = FALSE)
+
+MapStats.flag <- read.table("../Results/MiSeq/MapStats.flag")
+
+# Combine files
+
+mapstats <- left_join(MapStats.idx, MapStats.flag) %>%
+  dplyr::mutate(PERCENT_MISMATCH = Sum_Mismatch/Sum_Mapped)
+
+# Write summary stats file
+
+write.table(mapstats, file = "../Results/MiSeq/BWA_mapping.stats", quote = FALSE, sep = " ")
+
+```
+
+Compare and analyze mapping results
+
+```{r fig.height=10, fig.width=15}
+
+MapStats.flag <- read.table("../Results/MiSeq/BWA_mapping.stats")
+View(MapStats.flag)
+
+# Plot no of loci vs "empty" loci
+
+p1 <- ggplot(mapstats, aes(x = Lib, y = PROP_EMPTY)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  labs(x = "", y = "% Contigs With No Reads Mapped") +
+  theme_standard
+
+p2 <- ggplot(mapstats, aes(x = Lib, y = Reads_Mapped)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  labs(x = "Library", y = "Mean Reads Mapped Per Individual") +
+  theme_standard
+
+p3 <- ggplot(mapstats, aes(x = Lib, y = PERCENT_MISMATCH)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  labs(x = "",y = "% Reads Not Mapped As Pair") +
+  theme_standard
+
+multiplot(p1, p2, p3, cols = 3)
+
+```
+
+## Call SNPs
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+dDocent ../../../Code/snpcall.file
+
+```
+
+
+## Preliminary Filtering
+
+
+### Individuals and Populations
+
+Produce a list of all individuals included in the SNP dataset
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/MiSeq
+
+mv TotalRawSNPs.vcf Final.recode.vcf ../SNP_Calling/MiSeq/vcf
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcfsamplenames TotalRawSNPs.vcf > ../Stats/raw.ind
+
+```
+
+Use `ind_raw` file to write text files of individuals in each library and population
+
+```{r Assign sample data}
+
+MiSeq_Sample_Data <- read.csv("../Data/Sequencing/MiSeq/MiSeq_Sample_Data.csv")
+
+# Import Ind_raw
+
+Ind_Raw <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/raw.ind", 
+  header = FALSE, stringsAsFactors = FALSE,
+  col.names = "MiSeq_ID")
+
+Ind_Raw <- left_join(Ind_Raw, MiSeq_Sample_Data, by="MiSeq_ID")
+
+# Create files with individuals by family
+
+temp <- Ind_Raw %>%
+filter(Mother == "RSS_008") %>%
+select(MiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/BLU.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Mother == "RSS_009") %>%
+select(MiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/ORA.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+temp <- Ind_Raw %>%
+filter(Mother == "RSS_011") %>%
+select(MiSeq_ID)
+
+write.table(temp, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/PUR.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# Count the number of individuals in each family
+
+Mother <- count(Ind_Raw, Mother)
+View(Mother)
+
+```
+
+Use `VCFtools` to create stats files for depth, missing data, heterozygosity, and site quality for raw data
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --depth
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --site-mean-depth
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --site-quality
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --missing-indv
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --missing-site
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --het
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./Stats/Raw --singletons
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 265101 out of a possible 265101 Sites
+
+```
+
+Compare raw stats
+
+```{r stats raw, fig.height=7, fig.width=14, message=FALSE, warning=FALSE}
+
+# Load raw stats files
+
+Ind_Raw_Stats <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats/", vcf = "Raw")
+
+Loci_Raw_Stats <-  read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats/", vcf = "Raw")
+
+count(Ind_Raw_Stats)
+
+# 12 individuals
+
+count(Loci_Raw_Stats)
+
+# 265101 SNPs
+
+# Boxplot of mean depth per individual
+
+ggplot(Ind_Raw_Stats, aes(x=INDV, y=MEAN_DEPTH_Raw)) + 
+  geom_bar(stat = "identity", color = "black", fill = "grey") +
+  labs(x = "Library", y = "Mean Depth Per Individual") +
+  theme_standard
+
+# Write Mean Depth per Individual to csv
+
+Mean_Depth_Ind_Raw <- Ind_Raw_Stats %>% 
+select (c(INDV, MEAN_DEPTH_Raw))
+  
+write.csv(Mean_Depth_Ind_Raw, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/Mean_Depth_Raw.csv", col.names = TRUE, row.names = FALSE)
+
+```
+
+## Quick filtering for initial PCA
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf 
+
+vcftools --vcf Final.recode.vcf --minQ 30 --minDP 5 --recode --recode-INFO-all --out Final_minQ_DP
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 82378 out of a possible 82378 Sites
+
+vcfallelicprimitives Final_minQ_DP.recode.vcf --keep-info --keep-geno > Final_prim.vcf
+sed 's_\.|\._\./\._g' Final_prim.vcf > Final_fixed.vcf
+
+vcftools --vcf Final_fixed.vcf --remove-indels --recode --recode-INFO-all --out Final_no_indels
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 87620 out of a possible 104373 Sites
+
+vcftools --vcf Final_no_indels.recode.vcf --thin 1000 --out Final_Thinned --recode --recode-INFO-all
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 20823 out of a possible 87620 Sites
+
+vcftools --vcf Final_Thinned.recode.vcf --max-missing 0.95 --out Final_Filt --recode --recode-INFO-all
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 12284 out of a possible 20823 Sites
+
+```
+
+## PCA: Family Analysis
+
+Import filtered vcf file and make sure individuals cluster into correct families. 
+
+```{r message=FALSE, warning=FALSE,  fig.height=7, fig.width=7}
+
+library(vcfR)
+
+Final_vcf <- read.vcfR(file ="../Data/Sequencing/SNP_Calling/MiSeq/vcf/Final_Filt.recode.vcf")
+
+Final_Gen <- vcfR2genind(Final_vcf)
+
+# PCA With All Individuals
+
+X_All <-tab(Final_Gen, freq=TRUE, NA.method="mean")
+
+PCA_All <-dudi.pca(df = X_All, center = TRUE, scale = FALSE, scannf = FALSE, nf = 10)
+
+eig_All <- eigenvalues(PCA_All)
+
+plot.eigen.variance(eig_All)
+
+# Plot
+
+PC_Inds <- PC.ind(PCA_All) %>%
+  dplyr::rename(MiSeq_ID = `LIB_ID`)
+
+Und_Inds <- anti_join(Ind_Raw, PC_Inds)
+
+PC_Inds_All  <- PC.ind(PCA_All) %>%
+  dplyr::rename(MiSeq_ID = `LIB_ID`) %>%
+  left_join(Ind_Raw)
+
+# Plot by family
+
+p1 <- ggplot(PC_Inds_All , aes(x = Axis1, y = Axis2, label = Mother, fill = Mother, color = Mother)) +
+  geom_point(alpha = 0.75, size = 4) +
+  labs(x = paste("PC1:", round(eig_All[1, 3], digits = 3), "%"), 
+       y = paste("PC2:", round(eig_All[2, 3], digits = 3), "%")) +
+  ggtitle("By Family") +
+  scale_fill_manual(values=col7) +
+  scale_color_manual(values=col7) +
+  theme_standard + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  stat_ellipse(level = 0.95)
+
+plot(p1)
+
+```
+
+### Filter 1: Remove Unwanted and Low Quality Individuals
+
+Filter based on quality score, coverage, missing data, minor alleles, and mapping/variant calling artifacts
+
+Create a list of low quality individuals to remove
+
+```{r}
+
+# Create a list of low quality individuals to remove
+
+LQ_Ind <- Ind_Raw_Stats %>%
+  dplyr::filter(MISS_Raw > 0.9)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/LQ_raw.ind",
+col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove low quality individuals
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/TotalRawSNPs.vcf --out ./vcf/Spa_F0 --remove ./Stats/LQ_raw.ind --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 individuals
+# After filtering, kept 265101 out of a possible 265101 Sites
+
+```
+
+Determine number of contigs in haploid dataset 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf Spa_F0.recode.vcf --extract-FORMAT-info GT --out ../Stats/Spa_F0
+
+```
+
+```{r}
+
+hap_contigs <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F0.GT.FORMAT", header = TRUE) 
+hap_contigs <- dplyr::select(hap_contigs, CHROM)
+hap_contigs <- dplyr::distinct(hap_contigs)
+
+```
+
+
+The QUAL column of a VCF file is a phred-based score indicating the probability that the variant shown in the ALT column is wrong. Given the Phred quality score (Q), and the probability that a base is incorrectly called (P), Q = -10(Log10P).
+
+A quality score of 20 indicates, a 1 in 100 chance that the SNP site has been called incorrectly (i.e. 99% probability that correct call)
+
+Filter loci with quality score < 20, maximum mean depth of 2500 reads, and a minimum genotype depth of 3, i.e. genotypes with less than 3 reads are coded as missing
+
+```{bash filter LQ SNP calls}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+# Filter LQ SNP calls
+
+vcftools --vcf ./vcf/Spa_F0.recode.vcf --out ./vcf/Spa_F1 --minQ 20 --minGQ 20 --minDP 3 --maxDP 2500 --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 140000 out of a possible 265101 Sites
+
+# Stats 
+
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --depth
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --missing-indv
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --missing-site
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --het
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --geno-depth
+vcftools --vcf ./vcf/Spa_F1.recode.vcf --out ./Stats/Spa_F1 --singletons
+
+```
+
+Review stats
+
+```{r fig.height=14, fig.width=10,  message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F1 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats", vcf = "Spa_F1")
+
+Loci_Stats_F1 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats/", vcf = "Spa_F1")
+
+temp <- dplyr::filter(Loci_Stats_F1, MISS_Spa_F1 >= 0.7)
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F1, aes(x = MISS_Spa_F1)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "missing data per individual") +
+theme_standard
+
+# Plot Fis per individual
+
+p2 <- ggplot(Ind_Stats_F1, aes(x = Fis_Spa_F1)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot read depth per individual
+
+p3 <- ggplot(Ind_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Individual") +
+theme_standard
+
+# Plot depth vs missing
+
+p4 <- ggplot(Ind_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1, y = MISS_Spa_F1)) +
+geom_point(shape = 1) +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Individual", y = "% Missing Data") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F1, aes(x = MISS_Spa_F1)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F1, aes(x = MEAN_DEPTH_Spa_F1, y = MISS_Spa_F1)) +
+geom_point(shape = 1) +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F1, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dplyr::count(Ind_Stats_F1)
+
+dplyr::count(Loci_Stats_F1)
+
+```
+
+Removing low confidence SNP loci and genotype calls results in a reduction in the number of the (maximum) SNPs per locus.
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+
+p1 <- Loci_Raw_Stats %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs Per Locus, Raw") +
+theme_standard
+
+p2 <- Loci_Stats_F1 %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs Per Locus, F1") +
+theme_standard
+
+multiplot(p1, p2, cols=1)
+
+```
+
+Coding genotypes with low read depth (<3) as missing, results in an overall increase in missing data per locus and a shift in more individuals with missing data >90%; this is because individuals (and loci) with coverage issues are now characterized by higher missing data
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE}
+
+iraw <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Raw.imiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(INDV, F_MISS) %>%
+dplyr::rename(Raw = F_MISS)
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F1.imiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(INDV, F_MISS) %>%
+dplyr::rename(F1 = F_MISS)
+
+imiss <- left_join(imiss, iraw)
+
+p1 <- ggplot(imiss, aes(x = Raw, y = F1)) +
+geom_point(shape = 1) +
+geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+labs(x = "Individual Missing Data, Raw", y = "Individual Missing Data, F1") +
+theme_standard
+
+lraw <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Raw.lmiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(CHR, POS, F_MISS) %>%
+dplyr::rename(Raw = F_MISS)
+
+lmiss <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F1.lmiss",
+header = TRUE, stringsAsFactors = FALSE) %>%
+dplyr::select(CHR, POS, F_MISS) %>%
+dplyr::rename(F1 = F_MISS)
+
+lmiss <- left_join(lmiss, lraw)
+
+p2 <- ggplot(lmiss, aes(x = Raw, y = F1)) +
+geom_point(shape = 1) +
+geom_abline(slope = 1, color = "red", linetype = "dashed", size = 1) +
+labs(x = "Loci Missing Data, Raw", y = "Loci Missing Data, F1") +
+theme_standard
+
+multiplot(p1, p2, cols=1)
+
+```
+
+### Filter 2: Convert variant calls into phased SNP and INDEL genotypes.
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcfallelicprimitives ./vcf/Spa_F1.recode.vcf --keep-info --keep-geno > ./vcf/Spa_prim.vcf
+
+vcftools --vcf ./vcf/Spa_prim.vcf --out ./vcf/Spa_prim_no_indels --remove-indels --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 145132 out of a possible 173195 Sites
+
+```
+
+### Filter 3: Genotype call rate and allowed missing data per individual
+
+Remove loci with genotype call rate <30%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/Spa_prim_no_indels.recode.vcf --out ./vcf/Spa_F2a --max-missing 0.3 --min-meanDP 10 --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 72216 out of a possible 145132 Sites
+
+vcftools --vcf ./vcf/Spa_F2a.recode.vcf --out ./Stats/Spa_F2a --missing-indv
+
+```
+
+Flag individuals with > 95% missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2a.imiss", header = TRUE, stringsAsFactors = FALSE)
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.90, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.9) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2a_LQ.indv",
+col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove flagged individuals, then remove loci with genotype call rate <40%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/Spa_F2a.recode.vcf --out ./vcf/Spa_F2b --remove ./Stats/Spa_F2a_LQ.indv --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 72216 out of a possible 72216 Sites
+
+vcftools --vcf ./vcf/Spa_F2b.recode.vcf --out ./vcf/Spa_F2c --max-missing 0.4  --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 72122 out of a possible 72216 Sites
+
+vcftools --vcf ./vcf/Spa_F2c.recode.vcf --out ./Stats/Spa_F2c --missing-indv
+
+```
+
+Identify individuals with high missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2c.imiss", header = TRUE, stringsAsFactors = FALSE)
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.6, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.6) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2c_LQ.indv", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/Spa_F2c.recode.vcf --out ./Stats/Spa_F2c --missing-indv
+
+```
+
+Identify individuals with >75% missing data
+
+```{r fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+
+# Determine cutoff
+
+imiss <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2c.imiss", 
+header = TRUE, stringsAsFactors = FALSE) 
+
+ggplot(imiss, aes(x = F_MISS)) +
+geom_histogram(binwidth = 0.05, color = "black", fill = "grey") +
+geom_vline(xintercept = 0.4, color = "red", linetype = "dashed", size = 1) +
+theme_standard
+
+LQ_Ind <- imiss %>%
+dplyr::filter(F_MISS > 0.4) %>%
+dplyr::select(INDV)
+
+View(LQ_Ind)
+
+write.table(LQ_Ind, "../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F2c_LQ.indv",
+col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+```
+
+Remove flagged individuals
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/Spa_F2c.recode.vcf --out ./vcf/Spa_F2 --remove ./Stats/Spa_F2c_LQ.indv --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 72122 out of a possible 72122 Sites
+
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./Stats/Spa_F2 --depth
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./Stats/Spa_F2 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./Stats/Spa_F2 --missing-indv
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./Stats/Spa_F2 --missing-site
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./Stats/Spa_F2 --het
+
+```
+
+Analyze stats post-filtering
+
+```{r fig.height=14, fig.width=10, message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F2 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats", vcf = "Spa_F2") 
+
+View(Ind_Stats_F2)
+
+Loci_Stats_F2 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats", vcf = "Spa_F2")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F2, aes(x = MISS_Spa_F2)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Ind") +
+theme_standard
+
+# Plot read depth per individual
+
+p2 <- ggplot(Ind_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Ind") +
+theme_standard
+
+# Plot depth vs missing
+
+p3 <- ggplot(Ind_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2, y = MISS_Spa_F2)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Ind", y = "% Missing Data") +
+theme_standard
+
+# Plot Fis per individual
+
+p4 <- ggplot(Ind_Stats_F2, aes(x = Fis_Spa_F2)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F2, aes(x = MISS_Spa_F2)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data Per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F2, aes(x = MEAN_DEPTH_Spa_F2, y = MISS_Spa_F2)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F2, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Locus", y = "% Missing Data") +
+theme_standard
+
+png("../Data/Sequencing/SNP_Calling/MiSeq/Stats/m3.png",
+    width = 1000, height = 1000, units = "px", pointsize = 12)
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+dev.off()
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, cols=2)
+
+```
+
+### Filter 4: Minimum depth and genotype call rate
+
+Remove loci with minimum mean depth across all individuals < 15 and genotype call rate of <75%
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq
+
+vcftools --vcf ./vcf/Spa_F2.recode.vcf --out ./vcf/Spa_F4 --min-meanDP 15 --max-missing 0.75 --recode --recode-INFO-all
+
+# After filtering, kept 12 out of 12 Individuals
+# After filtering, kept 60621 out of a possible 72122 Sites
+
+# Stats
+
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --depth
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --site-mean-depth
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --missing-indv
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --missing-site
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --het
+vcftools --vcf ./vcf/Spa_F4.recode.vcf --out ./Stats/Spa_F4 --hardy
+
+```
+
+Analyze stats post-filtering
+
+```{r fig.height=14, fig.width=10, message=FALSE, warning=FALSE}
+
+# Load stats files
+
+Ind_Stats_F4 <- read.ind.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats", vcf = "Spa_F4")
+
+View(Ind_Stats_F4)
+
+Loci_Stats_F4 <- read.loc.stats(dir = "../Data/Sequencing/SNP_Calling/MiSeq/Stats", vcf = "Spa_F4")
+
+# Plot missing data per individual
+
+p1 <- ggplot(Ind_Stats_F4, aes(x = MISS_Spa_F4)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.3),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Missing Data Per Individual") +
+theme_standard
+
+# Plot Fis per individual
+
+p2 <- ggplot(Ind_Stats_F4, aes(x = Fis_Spa_F4)) +
+geom_histogram(binwidth = .01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(Fis_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Fis Per Individual") +
+theme_standard
+
+# Plot read depth per individuals
+
+p3 <- ggplot(Ind_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4)) +
+geom_histogram(binwidth = 10, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth Per Individual") +
+theme_standard
+
+# Plot depth vs missing
+
+p4 <- ggplot(Ind_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4, y = MISS_Spa_F4)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.5),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth Per Individual", y = "% Missing Data") +
+theme_standard
+
+# Plot distribution missing data per locus
+
+p5 <- ggplot(Loci_Stats_F4, aes(x = MISS_Spa_F4)) +
+geom_histogram(binwidth = 0.01, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "% Missing Data per Locus") +
+theme_standard
+
+# Plot distribution mean read depth
+
+p6 <- ggplot(Loci_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4)) +
+geom_histogram(binwidth = 5, color = "black", fill = "grey") +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Read Depth per Locus") +
+theme_standard
+
+# Plot read depth vs missing data
+
+p7 <- ggplot(Loci_Stats_F4, aes(x = MEAN_DEPTH_Spa_F4, y = MISS_Spa_F4)) +
+geom_point() +
+geom_vline(aes(xintercept = base::mean(MEAN_DEPTH_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_vline(aes(xintercept = 20),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = base::mean(MISS_Spa_F4, na.rm = TRUE)),
+color = "red", linetype = "dashed", size = 1) +
+geom_hline(aes(yintercept = 0.1),
+color = "red", linetype = "dashed", size = 1) +
+labs(x = "Mean Depth per Locus", y = "% Missing Data") +
+theme_standard
+
+# Plot no of SNPs per locus
+
+p8 <- Loci_Stats_F4 %>%
+dplyr::count(CHR) %>%
+ggplot(aes(x = n)) +
+geom_histogram(binwidth = 1, color = "black", fill = "grey") + 
+labs(x = "Number of SNPs per Locus") +
+theme_standard
+
+temp <- Loci_Stats_F4 %>%
+dplyr::count(CHR)
+
+# Plot number of SNPs per contig vs. mean depth
+
+p9 <- left_join(temp, Loci_Stats_F4) %>%
+ggplot() +
+geom_point(aes(x = n, y = MEAN_DEPTH_Spa_F4)) +
+labs(x = "Number of SNPs per Contig", y = "Mean Depth") +
+theme_standard
+
+multiplot(p1, p2, p3, p4, p5, p6, p7, p8, p9, cols=2)
+
+```
+
+### Identify paralogs 
+
+#### Find out the maximum number of alleles in the dataset. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf Spa_F4.recode.vcf --out ../Stats/Spa_F4 --counts
+
+cut -f -3 ../Stats/Spa_F4.frq.count > ../Stats/Spa_F4_al
+
+```
+
+```{r}
+
+Spa_F4.count <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/Spa_F4_al", header = TRUE) 
+
+# There are at most 4 alleles/position in the entire dataset (0,1,2,3)
+
+```
+
+#### BLU Family
+
+```{bash}
+
+# Remove individuals from ORA and PUR families
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf Spa_F4.recode.vcf --out BLU_SNPs --remove-indv ORA_140 --remove-indv ORA_180 --remove-indv ORA_200 --remove-indv PUR_080 --remove-indv PUR_100 --remove-indv PUR_140 --remove-indv PUR_160 --remove-indv PUR_200 --recode --recode-INFO-all
+
+# Find loci with heterozygous genotypes (these may be paralogs). This must be done for phased and unphased genotypes. Remember there are a maximum of 4 alleles/position in this dataset and all heterozygous genotypes must be accounted.  
+
+vcftools --vcf BLU_SNPs.recode.vcf --extract-FORMAT-info GT --out ../Stats/BLU_genotypes
+
+cut -f -6 ../Stats/BLU_genotypes.GT.FORMAT | grep -e 'CHROM' -e '0|1' -e '1|0' -e '0/1' -e '0|2' -e '2|0' -e '0/2' -e '1|2' -e '2|1' -e '1/2' -e '0|3' -e '3|0' -e '0/3' -e '1|3' -e '3|1' -e '1/3' -e '2|3' -e '3|2' -e '2/3' > ../Stats/BLU_paralogs
+
+# Make sure there are no instances in which there are three different homozygous genotypes within the family. 
+
+cut -f -6 ../Stats/BLU_genotypes.GT.FORMAT | grep -e 'CHROM' -e '2|2' -e '2/2' -e '3|3' -e '3/3' > ../Stats/BLU_excessalleles
+
+cut -f -6 ../Stats/BLU_excessalleles | grep -e 'CHROM' -e '0|0' -e '0/0' -e '1|1' -e '1/1' > ../Stats/BLU_excessalleles2
+
+# For the BLU family, there are no instances of this. 
+
+```
+
+Check that all heterozygous genotypes have been removed from the dataset by analyzing a vcf file without paralogs. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf BLU_SNPs.recode.vcf --out BLU_hom --exclude-positions "../Stats/BLU_paralogs" --recode --recode-INFO-all
+
+vcftools --vcf BLU_hom.recode.vcf --extract-FORMAT-info GT --out ../Stats/BLU_hom
+
+# Stats 
+
+vcftools --vcf BLU_hom.recode.vcf --out ../Stats/BLU_hom --hardy
+
+# Note: There is some discrepancy between number of loci in BLU_hom.GT.FORMAT file (24232 loci) and BLU_hom.hwe file (23677 loci) because HWE statistics are only calculated for biallelic loci and loci without missing observations.  
+
+```
+
+```{r}
+
+# Calculate observed heterozygosity for genotypes in HWE file.
+
+BLU_hwe <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/BLU_hom.hwe", 
+                  stringsAsFactors = FALSE, header = TRUE) %>%
+  dplyr::select(-ChiSq_HWE) %>%
+  separate(`OBS.HOM1.HET.HOM2.`, 
+           into = c("obs_hom1", "obs_het", "obs_hom2"), 
+           sep = "/", convert = TRUE) %>%
+  separate(`E.HOM1.HET.HOM2.`, 
+           into = c("exp_hom1", "exp_het", "exp_hom2"), 
+           sep = "/", convert = TRUE) %>%   
+  dplyr::mutate(Ho = obs_het/(obs_hom1 + obs_hom2 + obs_het),
+                He = exp_het/(exp_hom1 + exp_hom2 + exp_het)) %>%
+  dplyr::select(CHR, POS, obs_hom1, exp_hom1, obs_hom2, exp_hom2, P_HET_DEFICIT, obs_het, exp_het, P_HET_EXCESS, Ho, He, P_HWE)
+
+# All genotypes in HWE file for BLU family are homozygous based on looking at the observed number of heterozygotes.
+
+```
+
+#### ORA Family
+
+```{bash}
+
+# Remove individuals from BLU and PUR families
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf Spa_F4.recode.vcf --out ORA_SNPs --remove-indv BLU_100 --remove-indv BLU_140 --remove-indv BLU_180 --remove-indv BLU_200 --remove-indv PUR_080 --remove-indv PUR_100 --remove-indv PUR_140 --remove-indv PUR_160 --remove-indv PUR_200 --recode --recode-INFO-all
+
+# Find loci with heterozygous genotypes (these may be paralogs). This must be done for phased and unphased genotypes. Remember there are a maximum of 4 alleles/position in this dataset and all heterozygous genotypes must be accounted.  
+
+vcftools --vcf ORA_SNPs.recode.vcf --extract-FORMAT-info GT --out ../Stats/ORA_genotypes
+
+cut -f -5 ../Stats/ORA_genotypes.GT.FORMAT | grep -e 'CHROM' -e '0|1' -e '1|0' -e '0/1' -e '0|2' -e '2|0' -e '0/2' -e '1|2' -e '2|1' -e '1/2' -e '0|3' -e '3|0' -e '0/3' -e '1|3' -e '3|1' -e '1/3' -e '2|3' -e '3|2' -e '2/3' > ../Stats/ORA_paralogs
+
+# Make sure there are no instances in which there are three different homozygous genotypes within the family. 
+
+cut -f -5 ../Stats/ORA_genotypes.GT.FORMAT | grep -e 'CHROM' -e '2|2' -e '2/2' -e '3|3' -e '3/3' > ../Stats/ORA_excessalleles
+
+cut -f -5 ../Stats/ORA_excessalleles | grep -e 'CHROM' -e '0|0' -e '0/0' -e '1|1' -e '1/1' > ../Stats/ORA_excessalleles2
+
+# For the ORA family, there are no instances of this. 
+
+```
+
+Check that all heterozygous genotypes have been removed from the dataset by analyzing a vcf file without paralogs. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf ORA_SNPs.recode.vcf --out ORA_hom --exclude-positions "../Stats/ORA_paralogs" --recode --recode-INFO-all
+
+vcftools --vcf ORA_hom.recode.vcf --extract-FORMAT-info GT --out ../Stats/ORA_hom
+
+# Stats 
+
+vcftools --vcf ORA_hom.recode.vcf --out ../Stats/ORA_hom --hardy
+
+# Note: There is some discrepancy between number of loci in ORA_hom.GT.FORMAT file (25961 loci) and ORA_hom.hwe file (25376 loci) because HWE statistics are only calculated for biallelic loci and loci without missing observations.  
+
+```
+
+```{r}
+
+# Calculate observed heterozygosity for genotypes in HWE file.
+
+ORA_hwe <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/ORA_hom.hwe", 
+                  stringsAsFactors = FALSE, header = TRUE) %>%
+  dplyr::select(-ChiSq_HWE) %>%
+  separate(`OBS.HOM1.HET.HOM2.`, 
+           into = c("obs_hom1", "obs_het", "obs_hom2"), 
+           sep = "/", convert = TRUE) %>%
+  separate(`E.HOM1.HET.HOM2.`, 
+           into = c("exp_hom1", "exp_het", "exp_hom2"), 
+           sep = "/", convert = TRUE) %>%   
+  dplyr::mutate(Ho = obs_het/(obs_hom1 + obs_hom2 + obs_het),
+                He = exp_het/(exp_hom1 + exp_hom2 + exp_het)) %>%
+  dplyr::select(CHR, POS, obs_hom1, exp_hom1, obs_hom2, exp_hom2, P_HET_DEFICIT, obs_het, exp_het, P_HET_EXCESS, Ho, He, P_HWE)
+
+# All genotypes in HWE file for ORA family are homozygous based on looking at the observed number of heterozygotes.
+
+```
+
+#### PUR Family
+
+```{bash}
+
+# Remove individuals from BLU and ORA families
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf Spa_F4.recode.vcf --out PUR_SNPs --remove-indv ORA_140 --remove-indv ORA_180 --remove-indv ORA_200 --remove-indv BLU_100 --remove-indv BLU_140 --remove-indv BLU_180 --remove-indv BLU_200 --recode --recode-INFO-all
+
+# Find loci with heterozygous genotypes (these may be paralogs). This must be done for phased and unphased genotypes. Remember there are a maximum of 4 alleles/position in this dataset and all heterozygous genotypes must be accounted.  
+
+vcftools --vcf PUR_SNPs.recode.vcf --extract-FORMAT-info GT --out ../Stats/PUR_genotypes
+
+cut -f -7 ../Stats/PUR_genotypes.GT.FORMAT | grep -e 'CHROM' -e '0|1' -e '1|0' -e '0/1' -e '0|2' -e '2|0' -e '0/2' -e '1|2' -e '2|1' -e '1/2' -e '0|3' -e '3|0' -e '0/3' -e '1|3' -e '3|1' -e '1/3' -e '2|3' -e '3|2' -e '2/3' > ../Stats/PUR_paralogs
+
+# Make sure there are no instances in which there are three different homozygous genotypes within the family. 
+
+cut -f -7 ../Stats/PUR_genotypes.GT.FORMAT | grep -e 'CHROM' -e '2|2' -e '2/2' -e '3|3' -e '3/3' > ../Stats/PUR_excessalleles
+
+cut -f -7 ../Stats/PUR_excessalleles | grep -e 'CHROM' -e '0|0' -e '0/0' -e '1|1' -e '1/1' > ../Stats/PUR_excessalleles2
+
+# For the PUR family, there is an instance of this on dDocent_Contig_28940. This locus must be excluded. 
+
+cut -f -7 ../Stats/PUR_excessalleles2 | grep -e 'CHROM' -e 'dDocent_Contig_28940' > ../Stats/PUR_paralogs2
+
+```
+Check that all heterozygous genotypes have been removed from the dataset by analyzing a vcf file without paralogs. 
+
+```{bash}
+
+cd /home/shared/Sturgeon/Data/Sequencing/SNP_Calling/MiSeq/vcf
+
+vcftools --vcf PUR_SNPs.recode.vcf --out PUR_hom --exclude-positions "../Stats/PUR_paralogs" --recode --recode-INFO-all
+
+vcftools --vcf PUR_hom.recode.vcf --out PUR_hom2 --exclude-positions "../Stats/PUR_paralogs2" --recode --recode-INFO-all
+
+vcftools --vcf PUR_hom2.recode.vcf --extract-FORMAT-info GT --out ../Stats/PUR_hom
+
+# Stats 
+
+vcftools --vcf PUR_hom2.recode.vcf --out ../Stats/PUR_hom --hardy
+
+# Note: There is some discrepancy between number of loci in PUR_hom.GT.FORMAT file (23300 loci) and PUR_hom.hwe file (22902 loci) because HWE statistics are only calculated for biallelic loci and loci without missing observations.  
+
+```
+
+```{r}
+
+# Calculate observed heterozygosity for genotypes in HWE file.
+
+PUR_hwe <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/PUR_hom.hwe", 
+                  stringsAsFactors = FALSE, header = TRUE) %>%
+  dplyr::select(-ChiSq_HWE) %>%
+  separate(`OBS.HOM1.HET.HOM2.`, 
+           into = c("obs_hom1", "obs_het", "obs_hom2"), 
+           sep = "/", convert = TRUE) %>%
+  separate(`E.HOM1.HET.HOM2.`, 
+           into = c("exp_hom1", "exp_het", "exp_hom2"), 
+           sep = "/", convert = TRUE) %>%   
+  dplyr::mutate(Ho = obs_het/(obs_hom1 + obs_hom2 + obs_het),
+                He = exp_het/(exp_hom1 + exp_hom2 + exp_het)) %>%
+  dplyr::select(CHR, POS, obs_hom1, exp_hom1, obs_hom2, exp_hom2, P_HET_DEFICIT, obs_het, exp_het, P_HET_EXCESS, Ho, He, P_HWE)
+
+# All genotypes in HWE file for PUR family are homozygous based on looking at the observed number of heterozygotes.
+
+```
+
+#### Concatenated file of SNPs heterozygous within an individual across families
+
+```{r}
+
+BLU_paralogs <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/BLU_paralogs", header = TRUE, stringsAsFactors = FALSE) %>% dplyr::select(CHROM,POS)
+
+ORA_paralogs <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/ORA_paralogs", header = TRUE, stringsAsFactors = FALSE) %>% dplyr::select(CHROM,POS)
+
+PUR_paralogs <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/PUR_paralogs", header = TRUE, stringsAsFactors = FALSE) %>% dplyr::select(CHROM,POS)
+
+PUR_paralogs2 <- read.table("../Data/Sequencing/SNP_Calling/MiSeq/Stats/PUR_paralogs2", header = TRUE, stringsAsFactors = FALSE) %>% dplyr::select(CHROM,POS)
+
+psv <- dplyr::union(BLU_paralogs, ORA_paralogs)
+psv <- dplyr::union(psv, PUR_paralogs)
+psv <- dplyr::union(psv, PUR_paralogs2)
+psv <- dplyr::select(psv, CHROM)
+
+# 46240 PSVs (paralogous sequence variants)
+
+psv <- dplyr::distinct(psv)
+
+#6884 distinct multi-locus contigs
+
+# Write paralogous contigs to text file
+
+write.table(psv, file = "../Data/Sequencing/SNP_Calling/MiSeq/Stats/psv",
+            col.names= TRUE, row.names = FALSE, quote = FALSE)
+
+```
