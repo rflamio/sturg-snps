@@ -1,0 +1,12 @@
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/BLU_100-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/BLU_140-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/BLU_180-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/BLU_200-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/ORA_140-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/ORA_180-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/ORA_200-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/PUR_080-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/PUR_100-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/PUR_140-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/PUR_160-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
+samtools idxstats	/home/shared/Sturgeon/Data/Sequencing/LinkageMapReference/PUR_200-RG.bam	>> /home/shared/Sturgeon/Data/Mapping/LinkageMapReference/idxstats/MiSeq.idxstats
