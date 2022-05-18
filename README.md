@@ -9,5 +9,5 @@ Description of files:
 5. HiSeq_1.1_IDs_Barcodes.txt, HiSeq_1.2_IDs_Barcodes.txt, HiSeq_1.3_IDs_Barcodes.txt, and HiSeq_1.4_IDs_Barcodes.txt: Text files for matching barcodes to sample IDs in diploid sturgeon. 
 6. config.file: Script for trimming, mapping, and calling reads in diploid sturgeon. 
 7. AS_HiSeq_Sample_Data.csv: Metadata for diploid sturgeon.
-8. Spa_HiSeq1.gen: Genepop file of haplotyped SNPs in diploid sturgeon. 
+8. Spa_HiSeq1.gen: Genepop file of filtered, haplotyped SNPs in diploid sturgeon. 
 9. Spa_usats.gen: Genepop file of microsatellites in diploid sturgeon. 
